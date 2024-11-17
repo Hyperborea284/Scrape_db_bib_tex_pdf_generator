@@ -2,155 +2,220 @@ import os
 import sys
 import logging
 from datetime import datetime
-from time import sleep
-from pdf_generator import PDFGenerator  # Assumindo que PDFGenerator está implementado corretamente
-from summarizer import Summarizer  # Assumindo que Summarizer está implementado corretamente
-from link_manager import LinkManager  # Assumindo que LinkManager está implementado corretamente
-from database_utils import DatabaseUtils  # Assumindo que DatabaseUtils está implementado corretamente
-from dotenv import load_dotenv
+from DatabaseUtils import DatabaseUtils, LinkManager
+from SummarizerManager import SummarizerManager
+from LlamaQueryEngine import LlamaDatabaseQuery
+from PDFGenerator import PDFGenerator
+from TexGenerator import TexGenerator
+from BibGenerator import BibGenerator
 
-# Carregar variáveis de ambiente do arquivo .env, incluindo chaves de API e configurações de ambiente
-load_dotenv()
+# Configuração de logging
+logging.basicConfig(filename='main.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Configuração básica para o logger, que registra eventos de execução em um arquivo para fins de auditoria e depuração
-logging.basicConfig(filename='main.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Main:
-    def __init__(self, nome_banco='database.db'):
+    def __init__(self):
         """
-        Inicializa a classe principal `Main`, responsável por gerenciar o fluxo de trabalho completo,
-        desde a inserção de links até a geração do PDF final. 
-
-        Esta classe interage com as principais funcionalidades do sistema, incluindo:
-        - Gerenciamento do banco de dados SQLite.
-        - Extração e validação de dados de links.
-        - Sumarização de conteúdo textual.
-        - Geração de documentos PDF a partir dos sumários.
-
-        Parâmetros:
-        nome_banco (str): O nome do arquivo do banco de dados SQLite que será utilizado.
+        Inicializa a aplicação principal, configura banco de dados, e cria os componentes necessários.
         """
-        self.nome_banco = nome_banco
-        self.caminho_banco = os.path.join('databases', nome_banco)  # Caminho completo do banco de dados
-        self.database_utils = DatabaseUtils(self.caminho_banco)  # Instância para operações do banco de dados
-        self.link_manager = LinkManager(self.database_utils)  # Instância para gerenciamento de links
-        self.summarizer = Summarizer(self.caminho_banco)  # Instância para gerar resumos dos conteúdos
-        self.pdf_generator = PDFGenerator()  # Instância para geração e compilação do PDF
-        self.numero_links = 0  # Contador de links inseridos, para monitoramento
-        self.run()  # Inicia o fluxo de interação do usuário
+        self.db_utils = None
+        self.link_manager = None
+        self.nome_banco = None
+        self.pdf_generator = None
+        self.query_engine = None
+
+    def escolher_ou_criar_banco(self):
+        """
+        Exibe os bancos de dados existentes e permite ao usuário selecionar ou criar um novo.
+        """
+        os.makedirs('databases', exist_ok=True)
+        bancos_existentes = [file for file in os.listdir('databases') if file.endswith('.db')]
+
+        if bancos_existentes:
+            print("\nBancos de dados existentes:")
+            for i, banco in enumerate(bancos_existentes, 1):
+                print(f"{i}. {banco}")
+
+            escolha = input("Deseja usar um banco de dados existente? (S/N): ").strip().lower()
+            if escolha == 's':
+                indice = int(input("Digite o número do banco de dados desejado: "))
+                self.nome_banco = bancos_existentes[indice - 1]
+            else:
+                self.nome_banco = input("Digite o nome do novo banco de dados (inclua '.db'): ").strip()
+        else:
+            self.nome_banco = input("Digite o nome do novo banco de dados (inclua '.db'): ").strip()
+
+        self.atualizar_banco(self.nome_banco)
+
+    def atualizar_banco(self, nome_banco: str):
+        """
+        Configura o banco de dados para ser usado pela aplicação.
+        """
+        caminho_banco = os.path.join(os.getcwd(), "databases", nome_banco)
+        self.db_utils = DatabaseUtils(caminho_banco)
+        self.link_manager = LinkManager(caminho_banco)
+        self.query_engine = LlamaDatabaseQuery()
+        self.pdf_generator = PDFGenerator()
+
+        # Verifica e garante a criação de tabelas necessárias
+        self.db_utils.create_and_populate_references_table()  # Garantir bib_references
+        self.db_utils.create_summary_tables()  # Garantir tabelas de resumo
+
+        print(f"Banco de dados configurado: {caminho_banco}")
+
+    def limpar_tela(self):
+        """
+        Limpa o terminal.
+        """
+        os.system('clear' if os.name == 'posix' else 'cls')
+
+    def exibir_logo(self):
+        """
+        Exibe o logotipo da aplicação.
+        """
+        data = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logo = f"""
+        ╔══════════════════════════════════════════════════╗
+        ║                                                  ║
+        ║      Bem-vindo ao Sistema de Gerenciamento!      ║
+        ║                                                  ║
+        ║   Este programa gerencia informações de links,   ║
+        ║   realiza sumarizações e gera relatórios.        ║
+        ║                                                  ║
+        ║   Data e Hora: {data}               ║
+        ╚══════════════════════════════════════════════════╝
+        """
+        print(logo)
 
     def loop_inserir_links(self):
         """
-        Loop contínuo para inserção de links fornecidos pelo usuário.
-
-        Este método permite que o usuário insira múltiplos links, um por vez, 
-        para registro e análise. Ele permanece ativo até que o usuário digite 's'
-        para sair do loop. Cada link é validado e, em seguida, registrado no banco de dados 
-        se a URL for acessível e válida.
+        Loop para registro de links fornecidos pelo usuário.
         """
         print("\nAtivação do Loop de Inserção de Links")
         print("Pressione 's' para encerrar o loop e iniciar a sumarização.")
-        
+
         while True:
-            # Solicita o link ao usuário
             link = input('Digite o link que deseja registrar: ')
-            
-            # Condição de saída do loop
             if link.lower() == 's':
                 break
-            
-            # Validação do link para evitar URLs inválidas
+
             if not self.link_manager.is_valid_url(link):
-                print("Link inválido. Por favor, forneça um link válido ou 's' para encerrar.")
+                print("Link inválido. Por favor, forneça um link válido.")
                 continue
-    
+
             try:
-                # Tenta acessar e processar o conteúdo do link
-                response = self.link_manager.get_link_data(link)
-                self.link_manager.registrar_link(link, response)
+                sucesso = self.link_manager.fetch_and_store_link(link)
+                if sucesso:
+                    print(f"Link registrado com sucesso: {link}")
+                else:
+                    print(f"Falha ao registrar o link: {link}")
             except Exception as e:
-                # Em caso de erro, exibe a mensagem para o usuário
-                print(f"Erro ao acessar o link: {e}")
-                print("Não foi possível registrar o link.")
+                print(f"Erro ao registrar o link: {e}")
 
-    def interacao_usuario(self):
+    def remover_link_especifico(self):
         """
-        Gerencia o menu principal de interação com o usuário.
+        Exibe uma lista de links e permite ao usuário escolher um para remoção.
+        """
+        links = self.link_manager.get_all_links()
+        if not links:
+            print("Não há links para remover.")
+            return
 
-        Este método exibe um menu com opções que o usuário pode escolher para manipular
-        os dados de links e iniciar a geração de documentos. Cada opção é processada para 
-        permitir a inserção, remoção, alteração de dados ou finalização do fluxo.
+        print("\nLinks disponíveis para remoção:")
+        for i, link in enumerate(links, 1):
+            print(f"{i}. {link['link']}")
 
-        Opções:
-        1 - Inserir novos links
-        2 - Remover dados existentes
-        3 - Alterar dados existentes
-        4 - Continuar para geração do documento final (sumário e PDF)
-        5 - Encerrar o programa
+        escolha = int(input("Digite o número do link que deseja remover: "))
+        if 1 <= escolha <= len(links):
+            link_escolhido = links[escolha - 1]["link"]
+            if self.link_manager.delete_link(link_escolhido):
+                print(f"Link removido com sucesso: {link_escolhido}")
+            else:
+                print(f"Erro ao remover o link: {link_escolhido}")
+        else:
+            print("Número inválido.")
+
+    def gerar_pdf(self):
+        """
+        Realiza o fluxo completo: sumarização, geração de BibTeX, LaTeX e PDF.
+        """
+        print("\nGerando PDF com os dados registrados...")
+        try:
+            # Etapa 1: Ativar sumarização
+            print("Ativando sumarização e memoizando resultados...")
+            summarizer = SummarizerManager(self.nome_banco)
+            summarizer.synthesize_content()  # Processa links e memoiza os resumos
+
+            # Etapa 2: Gerar arquivo BibTeX
+            print("Gerando arquivo BibTeX...")
+            bib_generator = BibGenerator(self.nome_banco)
+            bib_file = bib_generator.generate_and_save_bib()
+
+            if not bib_file:
+                print("Erro ao gerar o arquivo BibTeX.")
+                return
+
+            # Etapa 3: Gerar PDF
+            print("Gerando PDF a partir dos dados...")
+            tex_generator = TexGenerator(self.nome_banco)
+            summaries = tex_generator.fetch_summaries_and_sources()[0]
+            pdf_path = tex_generator.generate_and_compile_document(summaries)
+
+            if pdf_path:
+                print(f"PDF gerado com sucesso: {pdf_path}")
+            else:
+                print("Erro ao gerar o PDF.")
+        except Exception as e:
+            print(f"Erro ao gerar o PDF: {e}")
+
+    def consultar_db_llama(self):
+        """
+        Inicia uma sessão de consulta interativa ao banco de dados usando o LlamaDatabaseQuery.
+        """
+        try:
+            self.query_engine.select_database()
+            self.query_engine.initialize_query_engine()
+            self.query_engine.run_interactive_session()
+        except Exception as e:
+            print(f"Erro ao iniciar sessão de consulta: {e}")
+
+    def menu_principal(self):
+        """
+        Exibe o menu principal e gerencia a interação com o usuário.
         """
         while True:
-            escolha = input('\nEscolha a opção:\n'
-                            '1. Inserir links\n'
-                            '2. Remover dados\n'
-                            '3. Alterar dados\n'
-                            '4. Continuar para a geração do documento\n'
-                            '5. Encerrar\n'
-                            'Digite o número da opção desejada: \n')
+            print("\nEscolha uma opção:")
+            print("1. Inserir links")
+            print("2. Remover link específico")
+            print("3. Gerar PDF")
+            print("4. Consultar banco de dados")
+            print("5. Sair")
 
-            # Processa a escolha do usuário e chama o método correspondente
+            escolha = input("Digite o número da opção desejada: ").strip()
             if escolha == '1':
                 self.loop_inserir_links()
             elif escolha == '2':
-                self.link_manager.remover_dados()
+                self.remover_link_especifico()
             elif escolha == '3':
-                self.link_manager.alterar_dados()
+                self.gerar_pdf()
             elif escolha == '4':
-                self.processar_summarize()
+                self.consultar_db_llama()
             elif escolha == '5':
-                sys.exit(0)
+                print("Encerrando o sistema...")
+                break
             else:
                 print("Opção inválida. Tente novamente.")
 
-    def processar_summarize(self):
+    def iniciar(self):
         """
-        Executa o processo de sumarização dos textos registrados e gera o PDF final.
-
-        Este método utiliza a classe `Summarizer` para sintetizar o conteúdo dos links
-        armazenados no banco de dados em um sumário conciso. Em seguida, a classe 
-        `PDFGenerator` é utilizada para criar um documento PDF com o conteúdo sumarizado.
+        Inicia o fluxo principal do programa.
         """
-        print("\nIniciando a sumarização dos textos registrados...")
-        # Gera os resumos para cada link registrado no banco de dados
-        summarized_texts = self.summarizer.synthesize_with_gpt(self.caminho_banco)
-        print(f"\nSumário gerado: {summarized_texts[:2]}...")  # Exibe os primeiros 2 textos para verificação
+        self.limpar_tela()
+        self.exibir_logo()
+        self.escolher_ou_criar_banco()
+        self.menu_principal()
 
-        # Gera o PDF final com o conteúdo sumarizado
-        print("\nGerando o documento PDF...")
-        generated_pdf_path = self.pdf_generator.generate_and_compile_pdf(summarized_texts, "sumario_documento")
-        if generated_pdf_path:
-            print(f"PDF gerado com sucesso em: {generated_pdf_path}")
-        else:
-            print("Erro na geração do PDF.")
-
-    def run(self):
-        """
-        Inicia o fluxo de trabalho principal da aplicação.
-
-        Este método exibe uma mensagem inicial de boas-vindas e executa o menu
-        de interação com o usuário, permitindo a escolha de ações para manipular dados 
-        de links, gerar resumos e documentos, ou encerrar o sistema.
-        """
-        print(f"\nIniciando o sistema com banco de dados: {self.caminho_banco}")
-        self.interacao_usuario()
 
 if __name__ == "__main__":
-    """
-    Ponto de entrada para a execução do sistema.
-
-    Este bloco é executado apenas se o script for chamado diretamente. Ele solicita ao usuário
-    o nome do banco de dados, inicializa o sistema e inicia o fluxo principal de trabalho 
-    a partir da classe `Main`.
-    """
-    nome_banco = input("Digite o nome do banco de dados (com a extensão .db): ") or "database.db"
-    main_system = Main(nome_banco)
+    app = Main()
+    app.iniciar()

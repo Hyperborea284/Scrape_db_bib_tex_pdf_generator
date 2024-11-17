@@ -1,77 +1,155 @@
 import sqlite3
 import os
-from typing import Any, Tuple, List, Optional
+import re
+import json
 import logging
+import hashlib
+from typing import List, Dict, Optional, Any, Tuple
+from functools import wraps
+from datetime import datetime, timedelta
+from goose3 import Goose
+import requests
 
-# Configuração do logger para registrar eventos e erros no arquivo 'DatabaseUtils.log'
+# Configuração do logger
 logging.basicConfig(filename='DatabaseUtils.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
+def memoize_to_db(table_name: str):
+    """
+    Decorador para memoizar o resultado de uma função no banco de dados.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapped(self, *args, **kwargs):
+            db_utils = getattr(self, "db_utils", None)
+            if db_utils is None or not hasattr(db_utils, "connect"):
+                raise AttributeError("O objeto decorado deve possuir um atributo 'db_utils' com um método 'connect'.")
+
+            prompt = str(args[0])
+            prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+
+            conn = db_utils.connect()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute(f"SELECT summary_gpt3 FROM {table_name} WHERE hash_gpt3 = ?", (prompt_hash,))
+                row = cursor.fetchone()
+                if row:
+                    logging.info(f"Memoization hit for {table_name} (hash: {prompt_hash}).")
+                    return row[0]
+
+                result = func(self, *args, **kwargs)
+                if result:
+                    cursor.execute(
+                        f"INSERT INTO {table_name} (hash_gpt3, prompt, summary_gpt3) VALUES (?, ?, ?)",
+                        (prompt_hash, prompt, result)
+                    )
+                    conn.commit()
+                return result
+            except sqlite3.Error as e:
+                logging.error(f"Erro ao memoizar dados na tabela {table_name}: {e}")
+                return None
+            finally:
+                db_utils.disconnect(conn)
+        return wrapped
+    return decorator
 
 class DatabaseUtils:
     def __init__(self, db_name: str = "database.db"):
         """
-        Inicializa a classe DatabaseUtils e configura o caminho do banco de dados SQLite.
-        
-        Parâmetros:
-        db_name (str): O nome do arquivo do banco de dados.
+        Inicializa o DatabaseUtils, garantindo que o banco seja criado no diretório correto.
         """
-        self.db_name = db_name
-        self.db_path = os.path.join("databases", self.db_name)
-        os.makedirs("databases", exist_ok=True)  # Cria o diretório 'databases' se ele não existir
-        self._initialize_database()  # Chama o método privado para inicializar o banco de dados
+        self.base_dir = os.path.join(os.getcwd(), "databases")
+        os.makedirs(self.base_dir, exist_ok=True)
+
+        self.db_path = os.path.join(self.base_dir, os.path.basename(db_name))
+        if not os.path.exists(self.db_path):
+            logging.info(f"Criando banco de dados em: {self.db_path}")
+            self._initialize_database()
 
     def _initialize_database(self):
         """
-        Cria o banco de dados e as tabelas necessárias, caso elas ainda não existam.
-
-        Este método configura as tabelas `links`, `metaresumo`, e várias tabelas de memoização 
-        (`relato`, `contexto`, etc.) para armazenamento de resumos específicos gerados por diferentes modelos.
+        Inicializa as tabelas necessárias.
         """
-        self.create_table_links()  # Tabela para armazenamento de links e informações associadas
-        self.create_table_memoization("relato")
-        self.create_table_memoization("contexto")
-        self.create_table_memoization("entidades")
-        self.create_table_memoization("linha_tempo")
-        self.create_table_memoization("contradicoes")
-        self.create_table_memoization("conclusao")
-        self.create_table_memoization("questionario")
-        self.create_table_metaresumo()  # Tabela para armazenamento de resumos agregados
+        with self.connect() as conn:
+            self.create_table_links(conn)
+            self.create_table_bib_references(conn)
+            self.create_summary_tables()
 
     def connect(self) -> sqlite3.Connection:
         """
-        Conecta ao banco de dados e retorna o objeto de conexão.
-
-        Retorna:
-        sqlite3.Connection: O objeto de conexão ao banco de dados SQLite.
+        Estabelece conexão.
         """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            return conn
-        except sqlite3.Error as e:
-            print(f"Erro ao conectar ao banco de dados: {e}")
-            raise
+        return sqlite3.connect(self.db_path)
 
     def disconnect(self, conn: sqlite3.Connection):
         """
-        Desconecta do banco de dados, com commit automático das operações pendentes.
-
-        Parâmetros:
-        conn (sqlite3.Connection): O objeto de conexão ao banco de dados.
+        Fecha conexão.
         """
-        if conn:
-            conn.commit()  # Salva as operações pendentes
-            conn.close()  # Fecha a conexão
+        conn.commit()
+        conn.close()
 
-    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> Optional[List[Tuple]]:
+    def create_table_links(self, conn: sqlite3.Connection):
         """
-        Executa uma consulta SQL no banco de dados e retorna o resultado.
+        Cria tabela 'links'.
+        """
+        query = '''
+        CREATE TABLE IF NOT EXISTS links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            link TEXT UNIQUE,
+            cleaned_text TEXT,
+            authors TEXT,
+            domain TEXT,
+            publish_date TEXT,
+            meta_description TEXT,
+            title TEXT,
+            tags TEXT,
+            schema TEXT,
+            opengraph TEXT
+        )
+        '''
+        conn.execute(query)
 
-        Parâmetros:
-        query (str): A instrução SQL a ser executada.
-        params (Tuple[Any, ...]): Os parâmetros a serem usados na consulta, se houver.
+    def create_table_bib_references(self, conn: sqlite3.Connection):
+        """
+        Cria tabela 'bib_references'.
+        """
+        query = '''
+        CREATE TABLE IF NOT EXISTS bib_references (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT DEFAULT 'Autor Desconhecido',
+            year INTEGER DEFAULT 0,
+            journal TEXT DEFAULT 'Desconhecido',
+            volume TEXT DEFAULT '',
+            number TEXT DEFAULT '',
+            pages TEXT DEFAULT '',
+            doi TEXT DEFAULT '',
+            url TEXT NOT NULL
+        )
+        '''
+        conn.execute(query)
 
-        Retorna:
-        Optional[List[Tuple]]: O resultado da consulta, ou None em caso de erro.
+    def create_summary_tables(self):
+        """
+        Cria tabelas de resumo.
+        """
+        summary_tables = ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]
+        with self.connect() as conn:
+            for table in summary_tables:
+                query = f'''
+                CREATE TABLE IF NOT EXISTS {table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hash_gpt3 TEXT UNIQUE,
+                    prompt TEXT NOT NULL,
+                    summary_gpt3 TEXT
+                )
+                '''
+                conn.execute(query)
+
+    def execute_query(self, query: str, params: tuple = ()) -> List[tuple]:
+        """
+        Executa uma consulta.
         """
         conn = self.connect()
         try:
@@ -79,89 +157,18 @@ class DatabaseUtils:
             cursor.execute(query, params)
             conn.commit()
             return cursor.fetchall()
-        except sqlite3.Error as e:
-            print(f"Erro ao executar consulta: {e}")
-            return None
         finally:
             self.disconnect(conn)
 
-    def create_table_links(self):
-        """
-        Cria a tabela `links` para armazenar as informações extraídas dos links, caso não exista.
-
-        Esta tabela armazena dados como o link original, texto limpo, autores, domínio,
-        data de publicação, descrição, título, tags, schema, e opengraph.
-        """
-        query = '''
-            CREATE TABLE IF NOT EXISTS links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                link TEXT UNIQUE,
-                cleaned_text TEXT,
-                authors TEXT,
-                domain TEXT,
-                publish_date TEXT,
-                meta_description TEXT,
-                title TEXT,
-                tags TEXT,
-                schema TEXT,
-                opengraph TEXT
-            )
-        '''
-        self.execute_query(query)
-
-    def create_table_memoization(self, table_name: str):
-        """
-        Cria uma tabela de memoização para armazenar resumos de uma seção específica.
-
-        Parâmetros:
-        table_name (str): O nome da tabela que será criada para armazenamento de resumos.
-        
-        Exemplo:
-        Tabelas podem incluir `relato`, `contexto`, `entidades`, etc., cada uma delas 
-        contendo colunas para armazenar resumos dos modelos GPT-3 e GPT-4.
-        """
-        query = f'''
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                hash_gpt3 TEXT PRIMARY KEY,
-                summary_gpt3 TEXT,
-                hash_gpt4 TEXT,
-                summary_gpt4 TEXT
-            )
-        '''
-        self.execute_query(query)
-
-    def create_table_metaresumo(self):
-        """
-        Cria a tabela `metaresumo` para armazenar informações agregadas dos resumos.
-
-        Esta tabela é utilizada para armazenar dados de resumos completos, incluindo
-        links agregados e o resumo resultante.
-        """
-        query = '''
-            CREATE TABLE IF NOT EXISTS metaresumo (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data TEXT,
-                aggregate_links TEXT,
-                resume TEXT
-            )
-        '''
-        self.execute_query(query)
-
     def insert_link(self, link_data: dict) -> bool:
         """
-        Insere um link e suas informações associadas na tabela `links`.
-
-        Parâmetros:
-        link_data (dict): Um dicionário contendo os dados do link a serem inseridos.
-
-        Retorna:
-        bool: `True` se a inserção for bem-sucedida, `False` caso contrário.
+        Insere link.
         """
         query = '''
-            INSERT OR IGNORE INTO links (
-                link, cleaned_text, authors, domain, publish_date,
-                meta_description, title, tags, schema, opengraph
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO links (
+            link, cleaned_text, authors, domain, publish_date,
+            meta_description, title, tags, schema, opengraph
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
         params = (
             link_data.get("link"),
@@ -173,87 +180,206 @@ class DatabaseUtils:
             link_data.get("title"),
             link_data.get("tags"),
             link_data.get("schema"),
-            link_data.get("opengraph")
+            link_data.get("opengraph"),
         )
-        result = self.execute_query(query, params)
-        return result is not None
+        try:
+            self.execute_query(query, params)
+            logging.info(f"Link registrado com sucesso: {link_data['link']}")
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao inserir o link no banco de dados: {e}")
+            return False
 
-    def insert_memoization(self, table_name: str, hash_value: str, summary: str, model: str):
+    def insert_summary(self, table_name: str, summary: str) -> bool:
         """
-        Insere um resumo memoizado na tabela específica, associando-o a um hash e modelo específico.
-
-        Parâmetros:
-        table_name (str): O nome da tabela onde o resumo será inserido.
-        hash_value (str): O valor hash do conteúdo, usado para verificação de memoização.
-        summary (str): O conteúdo do resumo.
-        model (str): O modelo utilizado para gerar o resumo (`gpt-3` ou `gpt-4`).
+        Insere resumo.
         """
-        column = "summary_gpt3" if model == "gpt-3" else "summary_gpt4"
-        hash_column = "hash_gpt3" if model == "gpt-3" else "hash_gpt4"
         query = f'''
-            INSERT OR IGNORE INTO {table_name} ({hash_column}, {column})
-            VALUES (?, ?)
+        INSERT INTO {table_name} (hash_gpt3, prompt, summary_gpt3)
+        VALUES (?, ?, ?)
         '''
-        params = (hash_value, summary)
-        self.execute_query(query, params)
+        hash_summary = hashlib.sha256(summary.encode('utf-8')).hexdigest()
+        try:
+            self.execute_query(query, (hash_summary, summary))
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao inserir resumo na tabela {table_name}: {e}")
+            return False
 
-    def retrieve_memoization(self, table_name: str, hash_value: str, model: str) -> Optional[str]:
+    def fetch_cleaned_texts(self) -> List[Tuple[str]]:
         """
-        Recupera um resumo memoizado com base no hash e no modelo especificado.
+        Busca textos limpos.
+        """
+        query = "SELECT cleaned_text FROM links WHERE cleaned_text IS NOT NULL"
+        return self.execute_query(query)
+
+    def create_and_populate_references_table(self):
+        """
+        Cria e popula tabela 'bib_references'.
+        """
+        conn = self.connect()
+        try:
+            self.create_table_bib_references(conn)
+            links = conn.execute("SELECT id, meta_description, link FROM links").fetchall()
+
+            for link in links:
+                title = link[1] or "Título Desconhecido"
+                url = link[2]
+                conn.execute('''
+                INSERT OR IGNORE INTO bib_references (id, title, url)
+                VALUES (?, ?, ?)
+                ''', (link[0], title, url))
+            conn.commit()
+            logging.info("Tabela 'bib_references' criada e populada com sucesso.")
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao criar ou popular a tabela 'bib_references': {e}")
+        finally:
+            self.disconnect(conn)
+
+class LinkManager:
+    def __init__(self, db_name: str = "database.db"):
+        """
+        Inicializa o LinkManager, que gerencia os links no banco de dados.
+        """
+        self.db_utils = DatabaseUtils(db_name)
+        self.goose = Goose()
+
+    def is_valid_url(self, url: str) -> bool:
+        """
+        Valida um URL usando regex.
+        """
+        url_regex = re.compile(r'^(https?:\/\/)?([a-zA-Z0-9_\-]+\.)+[a-zA-Z]{2,}')
+        return re.match(url_regex, url) is not None
+
+    def fetch_and_store_link(self, url: str) -> bool:
+        """
+        Busca dados de um link e armazena no banco de dados.
 
         Parâmetros:
-        table_name (str): O nome da tabela onde buscar o resumo.
-        hash_value (str): O valor hash do conteúdo.
-        model (str): O modelo usado para gerar o resumo (`gpt-3` ou `gpt-4`).
+        url (str): URL do qual extrair os dados.
 
         Retorna:
-        Optional[str]: O resumo memoizado, ou `None` se não encontrado.
+        bool: True se os dados foram armazenados com sucesso, False caso contrário.
         """
-        column = "summary_gpt3" if model == "gpt-3" else "summary_gpt4"
-        hash_column = "hash_gpt3" if model == "gpt-3" else "hash_gpt4"
-        query = f'SELECT {column} FROM {table_name} WHERE {hash_column} = ?'
-        result = self.execute_query(query, (hash_value,))
-        return result[0][0] if result else None
+        if not self.is_valid_url(url):
+            logging.error(f"URL inválida: {url}")
+            return False
 
-    def insert_metaresumo(self, data: str, aggregate_links: str, resume: str) -> bool:
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            article = self.goose.extract(url)
+
+            if article.cleaned_text:
+                # Normalização de publish_date
+                publish_date = article.publish_date
+                if isinstance(publish_date, list):
+                    publish_date = publish_date[0]  # Usa o primeiro valor, se for uma lista
+
+                link_data = {
+                    "link": url,
+                    "cleaned_text": article.cleaned_text,
+                    "authors": ', '.join(article.authors) if article.authors else None,
+                    "domain": article.domain,
+                    "publish_date": publish_date or None,  # Garantir tipo compatível
+                    "meta_description": article.meta_description,
+                    "title": article.title,
+                    "tags": ', '.join(article.tags) if article.tags else None,
+                    "schema": json.dumps(article.schema) if article.schema else None,
+                    "opengraph": json.dumps(article.opengraph) if article.opengraph else None,
+                }
+                return self.db_utils.insert_link(link_data)
+            else:
+                logging.warning(f"Falha ao extrair conteúdo limpo para o link: {url}")
+                return False
+
+        except requests.RequestException as e:
+            logging.error(f"Erro ao acessar o link {url}: {e}")
+        except Exception as e:
+            logging.error(f"Erro ao processar o link {url}: {e}")
+
+        return False
+
+    def remove_all_links(self):
         """
-        Insere um metaresumo na tabela `metaresumo`.
-
-        Parâmetros:
-        data (str): A data da inserção.
-        aggregate_links (str): Uma string com links agregados ou informações associadas.
-        resume (str): O resumo agregado.
-
-        Retorna:
-        bool: `True` se a inserção for bem-sucedida, `False` caso contrário.
+        Remove todos os links armazenados no banco de dados.
         """
-        query = '''
-            INSERT INTO metaresumo (data, aggregate_links, resume)
-            VALUES (?, ?, ?)
-        '''
-        params = (data, aggregate_links, resume)
-        result = self.execute_query(query, params)
-        return result is not None
+        self.db_utils.execute_query("DELETE FROM links")
+        logging.info("Todos os links foram removidos com sucesso.")
 
-    def fetch_all_links(self) -> List[Tuple]:
+    def get_all_links(self) -> List[Dict[str, Any]]:
         """
-        Recupera todos os links e suas informações da tabela `links`.
-
-        Retorna:
-        List[Tuple]: Uma lista de tuplas com os dados dos links.
+        Recupera todos os links armazenados no banco de dados.
         """
-        query = 'SELECT * FROM links'
-        return self.execute_query(query) or []
+        rows = self.db_utils.execute_query("SELECT * FROM links")
+        columns = ['id', 'link', 'cleaned_text', 'authors', 'domain', 'publish_date', 'meta_description', 'title', 'tags', 'schema', 'opengraph']
+        return [dict(zip(columns, row)) for row in rows]
 
-    def fetch_summary_by_section(self, section_name: str) -> List[Tuple]:
+    def clean_old_links(self, days: int = 30) -> int:
         """
-        Recupera todos os resumos de uma seção específica, como `relato` ou `contexto`.
-
-        Parâmetros:
-        section_name (str): O nome da seção cujos resumos serão recuperados.
-
-        Retorna:
-        List[Tuple]: Uma lista de tuplas contendo os resumos da seção especificada.
+        Remove links com data de publicação mais antiga que o limite especificado.
         """
-        query = f'SELECT * FROM {section_name}'
-        return self.execute_query(query) or []
+        cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        result = self.db_utils.execute_query("DELETE FROM links WHERE publish_date < ?", (cutoff_date,))
+        return len(result)
+
+    def get_link_data(self, url: str) -> dict:
+        """
+        Extrai dados de um link usando o Goose.
+        """
+        article = self.goose.extract(url)
+        if article.cleaned_text:
+            return {
+                "link": url,
+                "cleaned_text": article.cleaned_text,
+                "authors": ', '.join(article.authors) if article.authors else None,
+                "domain": article.domain,
+                "publish_date": article.publish_date,
+                "meta_description": article.meta_description,
+                "title": article.title,
+                "tags": ', '.join(article.tags) if article.tags else None,
+                "schema": article.schema,
+                "opengraph": article.opengraph,
+            }
+        raise ValueError("Nenhum texto limpo foi extraído do link.")
+
+    def register_multiple_links(self, urls: List[str]) -> Dict[str, bool]:
+        """
+        Registra múltiplos links no banco de dados.
+        """
+        return {url: self.fetch_and_store_link(url) for url in urls}
+
+    def fetch_link_data(self, url: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca dados de um link específico no banco de dados.
+        """
+        result = self.db_utils.execute_query("SELECT * FROM links WHERE link = ?", (url,))
+        if result:
+            columns = ['id', 'link', 'cleaned_text', 'authors', 'domain', 'publish_date', 'meta_description', 'title', 'tags', 'schema', 'opengraph']
+            return dict(zip(columns, result[0]))
+        return None
+
+    def delete_link(self, url: str) -> bool:
+        """
+        Remove um link específico do banco de dados.
+        """
+        result = self.db_utils.execute_query("DELETE FROM links WHERE link = ?", (url,))
+        return bool(result)
+
+    def update_link_data(self, url: str, updated_data: Dict[str, Any]) -> bool:
+        """
+        Atualiza os dados de um link no banco de dados.
+        """
+        set_clause = ', '.join([f"{key} = ?" for key in updated_data.keys()])
+        query = f"UPDATE links SET {set_clause} WHERE link = ?"
+        params = tuple(updated_data.values()) + (url,)
+        result = self.db_utils.execute_query(query, params)
+        return bool(result)
+
+    def fetch_links_by_domain(self, domain: str) -> List[Dict[str, Any]]:
+        """
+        Busca todos os links de um domínio específico no banco de dados.
+        """
+        rows = self.db_utils.execute_query("SELECT * FROM links WHERE domain = ?", (domain,))
+        columns = ['id', 'link', 'cleaned_text', 'authors', 'domain', 'publish_date', 'meta_description', 'title', 'tags', 'schema', 'opengraph']
+        return [dict(zip(columns, row)) for row in rows]

@@ -6,7 +6,7 @@ from pylatexenc.latexencode import UnicodeToLatexEncoder
 from dotenv import load_dotenv
 import shutil
 
-# Configuração do logger para capturar eventos e erros no arquivo 'PDFGenerator.log'
+# Configuração do logger para capturar eventos e erros
 logging.basicConfig(filename='PDFGenerator.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -42,34 +42,29 @@ class PDFGenerator:
 
     def compile_tex_to_pdf(self, tex_file_path: str) -> str:
         """
-        Compila um arquivo .tex em um .pdf utilizando o `latexmk`, que garante a compilação completa
-        com todas as dependências como referências e bibliografias.
+        Compila o arquivo .tex em um arquivo PDF.
 
         Parâmetros:
-        tex_file_path (str): Caminho completo do arquivo LaTeX (.tex) a ser compilado.
+        tex_file_path (str): Caminho do arquivo .tex.
 
         Retorna:
-        str: Caminho completo do arquivo PDF gerado ou uma string vazia em caso de erro.
+        str: Caminho do arquivo PDF gerado ou string vazia se houve erro.
         """
-        try:
-            pdf_file_name = os.path.splitext(os.path.basename(tex_file_path))[0] + ".pdf"
-            pdf_file_path = os.path.join(self.base_dir, pdf_file_name)
+        if not os.path.exists(tex_file_path):
+            logging.error(f"Arquivo .tex não encontrado: {tex_file_path}")
+            return ""
 
-            # Compilação utilizando latexmk para assegurar múltiplas passagens, se necessário
-            result = subprocess.run(
-                ['latexmk', '-pdf', '-interaction=nonstopmode', '-output-directory', self.base_dir, tex_file_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            
-            if result.returncode == 0:
-                logging.info(f"PDF file successfully generated: {pdf_file_path}")
+        try:
+            subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
+            pdf_file_path = os.path.splitext(tex_file_path)[0] + ".pdf"
+            if os.path.exists(pdf_file_path):
+                logging.info(f"PDF gerado com sucesso: {pdf_file_path}")
                 return pdf_file_path
             else:
-                logging.error(f"latexmk compilation error: {result.stderr.decode('utf-8')}")
+                logging.error(f"Erro: PDF não foi gerado.")
                 return ""
-
-        except Exception as e:
-            logging.error(f"Error during PDF compilation: {e}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Erro ao compilar o arquivo LaTeX: {e}")
             return ""
 
     def cleanup_auxiliary_files(self, tex_file_path: str):
@@ -81,7 +76,7 @@ class PDFGenerator:
         """
         base_name = os.path.splitext(os.path.basename(tex_file_path))[0]
         aux_extensions = ['.aux', '.log', '.out', '.fls', '.fdb_latexmk', '.toc', '.synctex.gz', '.bbl', '.blg']
-        
+
         for ext in aux_extensions:
             aux_file = os.path.join(self.base_dir, base_name + ext)
             if os.path.exists(aux_file):
@@ -102,7 +97,7 @@ class PDFGenerator:
         str: Caminho final do PDF na pasta de saída ou uma string vazia em caso de erro.
         """
         final_pdf_path = os.path.join(self.base_dir, os.path.basename(pdf_file_path))
-        
+
         try:
             shutil.move(pdf_file_path, final_pdf_path)
             logging.info(f"PDF moved to output directory: {final_pdf_path}")
@@ -110,6 +105,19 @@ class PDFGenerator:
         except Exception as e:
             logging.error(f"Error moving PDF to output directory: {e}")
             return ""
+
+    def open_pdf_with_okular(self, pdf_file_path: str):
+        """
+        Abre o arquivo PDF gerado usando o visualizador Okular.
+
+        Parâmetros:
+        pdf_file_path (str): Caminho completo do arquivo PDF a ser aberto.
+        """
+        try:
+            subprocess.Popen(['okular', pdf_file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logging.info(f"PDF opened with Okular: {pdf_file_path}")
+        except Exception as e:
+            logging.error(f"Failed to open PDF with Okular: {e}")
 
     def generate_and_compile_pdf(self, tex_content: str, file_name_prefix: str) -> str:
         """
@@ -126,7 +134,7 @@ class PDFGenerator:
         # Geração do caminho para o arquivo .tex com timestamp para evitar sobrescrita
         timestamp = self.generate_timestamp()
         tex_file_path = os.path.join(self.base_dir, f"{file_name_prefix}_{timestamp}.tex")
-        
+
         # Salvar o conteúdo LaTeX no arquivo .tex para posterior compilação
         with open(tex_file_path, 'w', encoding='utf-8') as f:
             f.write(tex_content)
@@ -140,6 +148,9 @@ class PDFGenerator:
             self.cleanup_auxiliary_files(tex_file_path)
             # Movendo o PDF final para o diretório de saída
             final_pdf_path = self.move_pdf_to_output(pdf_file_path)
+            # Abrindo o PDF com Okular
+            if final_pdf_path:
+                self.open_pdf_with_okular(final_pdf_path)
             return final_pdf_path
         else:
             logging.error(f"PDF compilation failed for: {tex_file_path}")

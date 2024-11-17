@@ -1,253 +1,190 @@
 import os
-import sqlite3
 import logging
+import sqlite3
 from datetime import datetime
 from pylatex import Document, Section, Command, NoEscape
-from pylatex.utils import escape_latex
 from pylatexenc.latexencode import UnicodeToLatexEncoder
-import re
 import subprocess
-import hashlib
-from openai import OpenAI
-from dotenv import load_dotenv
 
-# Configuração do logger para registrar eventos e erros em 'TexGenerator.log'
+# Configuração do logger
 logging.basicConfig(filename='TexGenerator.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Carrega as variáveis de ambiente do arquivo .env, incluindo a chave de API da OpenAI
-load_dotenv(".env")
-
-class DatabaseHandler:
-    """
-    Classe DatabaseHandler para gerenciar operações de extração de dados do banco de dados SQLite.
-    """
-    def __init__(self, db_name):
-        self.conn = sqlite3.connect(db_name)
-        self.cursor = self.conn.cursor()
-        self.db_name = db_name
-
-    def get_all_elements_from_db(self, table_name, column_name):
-        """
-        Recupera todos os elementos de uma coluna específica de uma tabela específica no banco de dados.
-        
-        Parâmetros:
-        table_name (str): Nome da tabela no banco de dados.
-        column_name (str): Nome da coluna da qual os dados serão recuperados.
-        
-        Retorna:
-        List[str]: Uma lista com os valores recuperados da coluna especificada.
-        """
-        query = f"SELECT {column_name} FROM {table_name}"
-        self.cursor.execute(query)
-        elements = self.cursor.fetchall()
-        all_elements = [element[0] for element in elements] if elements else []
-        return all_elements
 
 
 class TexGenerator:
     """
-    Classe TexGenerator para gerar, revisar e compilar documentos LaTeX a partir de dados no banco de dados.
+    Classe TexGenerator para gerar, revisar e compilar documentos LaTeX a partir de dados do banco de dados.
     """
     base_dir = 'pdf_output/'
 
-    def __init__(self, db_name):
+    def __init__(self, db_name: str):
         """
-        Inicializa o TexGenerator, define o diretório de saída e cria uma instância do encoder UnicodeToLatexEncoder.
-        
-        Parâmetros:
-        db_name (str): Nome do banco de dados de onde os dados serão recuperados.
+        Inicializa o TexGenerator, definindo o caminho do banco e o diretório de saída.
         """
-        self.db_name = db_name
+        self.db_name = os.path.join(os.getcwd(), "databases", os.path.basename(db_name))
         os.makedirs(self.base_dir, exist_ok=True)
         self.encoder = UnicodeToLatexEncoder(unknown_char_policy='replace')
-        self.database_handler = DatabaseHandler(db_name)
-        
-        # Extrai o nome do arquivo sem extensão para o caminho do arquivo .bib
-        _, db_file_name = os.path.split(db_name)
-        db_name_without_extension, _ = os.path.splitext(db_file_name)
-        self.bib_path = os.path.join(self.base_dir, f"{db_name_without_extension}.bib")
 
     @staticmethod
-    def generate_timestamp():
+    def generate_timestamp() -> str:
         """
-        Gera uma string de timestamp no formato 'AAAA-MM-DD-HH-MM-SS'.
+        Gera um timestamp formatado para nomear arquivos.
 
         Retorna:
-        str: Timestamp formatado como string.
+        str: Timestamp no formato 'AAAA-MM-DD-HH-MM-SS'.
         """
         now = datetime.now()
         return now.strftime("%Y-%m-%d-%H-%M-%S")
 
-    def generate_dynamic_entries_section(self) -> str:
+    def fetch_summaries_and_sources(self) -> tuple:
         """
-        Gera a seção dinâmica de avisos e citações para o documento LaTeX, incluindo uma lista de fontes citadas.
+        Busca os resumos de cada seção e o conteúdo do arquivo BibTeX.
 
         Retorna:
-        str: String formatada contendo a seção de aviso e citações.
+        tuple: Dicionário com os resumos e o conteúdo BibTeX.
         """
-        entry_keys = self.get_entry_keys()
-        dynamic_section = "\\section{Aviso Importante}\n" \
-                          "\\textbf{Este documento foi gerado usando processamento de linguística computacional auxiliado por inteligência artificial.}\n"
-        
-        # Adiciona as chaves de entrada, se disponíveis, formatadas para citações no LaTeX
-        if entry_keys:
-            dynamic_section += "Para tanto foram analisadas as seguintes fontes: "
-            dynamic_section += ", ".join(f"\\cite{{{key}}}" for key in entry_keys)
-            dynamic_section += ".\n"
-        
-        dynamic_section += "\\textbf{Portanto este conteúdo requer revisão humana, pois pode conter erros.} Decisões jurídicas, de saúde, financeiras ou similares " \
-                           "não devem ser tomadas com base somente neste documento. A Ephor - Linguística Computacional não se responsabiliza " \
-                           "por decisões ou outros danos oriundos da tomada de decisão sem a consulta dos devidos especialistas.\n" \
-                           "A consulta da originalidade deste conteúdo para fins de verificação de plágio pode ser feita em " \
-                           "\\href{http://www.ephor.com.br}{ephor.com.br}.\n"
-        
-        return dynamic_section
+        sections = ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]
+        summaries = {}
+        bib_content = ""
 
-    def get_entry_keys(self):
+        try:
+            if not os.path.exists(self.db_name):
+                logging.error(f"Banco de dados não encontrado: {self.db_name}")
+                return summaries, bib_content
+
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+
+            # Busca os resumos de cada seção
+            for section in sections:
+                cursor.execute(f"SELECT summary_gpt3 FROM {section}")
+                rows = cursor.fetchall()
+                summaries[section] = [row[0] for row in rows if row[0]]  # Apenas resumos não vazios
+
+            conn.close()
+
+            # Carregar conteúdo BibTeX
+            bib_path = os.path.join(self.base_dir, "references.bib")
+            if os.path.exists(bib_path):
+                with open(bib_path, 'r', encoding='utf-8') as f:
+                    bib_content = f.read()
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar resumos ou fontes: {e}")
+        except Exception as e:
+            logging.error(f"Erro geral ao carregar fontes ou resumos: {e}")
+
+        return summaries, bib_content
+
+    def create_tex_document(self, summaries: dict, bib_content: str) -> Document:
         """
-        Extrai todas as chaves de entrada do arquivo .bib para gerar citações no documento LaTeX.
+        Cria um documento LaTeX com os resumos e fontes fornecidos.
 
-        Retorna:
-        List[str]: Lista das chaves das entradas encontradas no arquivo .bib.
-        """
-        if not os.path.exists(self.bib_path):
-            logging.warning(f"Arquivo .bib não encontrado: {self.bib_path}")
-            return []
-        
-        with open(self.bib_path, 'r', encoding='utf-8') as bib_file:
-            bib_content = bib_file.read()
-
-        entry_keys = re.findall(r'@[\w]+\{([^,]+),', bib_content)
-        return entry_keys
-
-    def create_tex_document(self, db_data: list) -> Document:
-        """
-        Cria um objeto Document do LaTeX a partir dos dados recuperados do banco de dados.
-        
         Parâmetros:
-        db_data (list): Lista contendo os dados de cada seção do documento.
-        
+        summaries (dict): Dicionário com os resumos por seção.
+        bib_content (str): Conteúdo do arquivo BibTeX.
+
         Retorna:
-        Document: Documento LaTeX criado com todas as seções e entradas.
+        Document: Documento LaTeX.
         """
         doc = Document()
-        
-        # Configurações iniciais, substituindo o conteúdo do arquivo ini_latex.txt
-        title = db_data[0]
-        doc.preamble.append(Command("title", escape_latex(title)))
-        doc.preamble.append(Command("bibliography", os.path.splitext(self.bib_path)[0]))
 
-        # Seção dinâmica de avisos
-        with doc.create(Section("Aviso Importante")):
-            doc.append(NoEscape(self.generate_dynamic_entries_section()))
+        # Configurações iniciais do documento
+        doc.preamble.append(Command("title", "Relatório de Resumos"))
+        doc.append(NoEscape("\\maketitle"))
 
-        # Adiciona o conteúdo das outras seções
-        sections = ["Relato", "Contexto", "Entidades", "Linha do Tempo", "Contradições", "Conclusão", "Questionário"]
-        for section_title, content in zip(sections, db_data[1:]):
-            with doc.create(Section(section_title)):
-                doc.append(NoEscape(self.encoder.unicode_to_latex(content)))
+        # Adiciona a seção de fontes
+        with doc.create(Section("Fontes Utilizadas")):
+            doc.append(NoEscape(self.encoder.unicode_to_latex(bib_content)))
+
+        # Adiciona cada seção com os resumos
+        for section, texts in summaries.items():
+            with doc.create(Section(section.capitalize())):
+                for text in texts:
+                    doc.append(f"{self.encoder.unicode_to_latex(text)}\n\n")
 
         return doc
 
-    def save_tex_file(self, doc: Document) -> str:
+    def save_files(self, tex_content: str, bib_content: str) -> tuple:
         """
-        Salva o documento LaTeX gerado em um arquivo .tex no diretório de saída.
+        Salva os arquivos LaTeX (.tex) e BibTeX (.bib).
 
         Parâmetros:
-        doc (Document): Documento LaTeX a ser salvo.
+        tex_content (str): Conteúdo LaTeX.
+        bib_content (str): Conteúdo BibTeX.
 
         Retorna:
-        str: Caminho completo do arquivo .tex salvo.
+        tuple: Caminhos dos arquivos .tex e .bib salvos.
         """
         timestamp = self.generate_timestamp()
         tex_file_path = os.path.join(self.base_dir, f"{timestamp}.tex")
-        doc.generate_tex(tex_file_path)
-        logging.info(f"Arquivo LaTeX salvo em: {tex_file_path}")
-        return tex_file_path
+        bib_file_path = os.path.join(self.base_dir, f"{timestamp}.bib")
+
+        try:
+            with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
+                tex_file.write(tex_content)
+            logging.info(f"Arquivo LaTeX salvo: {tex_file_path}")
+
+            with open(bib_file_path, 'w', encoding='utf-8') as bib_file:
+                bib_file.write(bib_content)
+            logging.info(f"Arquivo BibTeX salvo: {bib_file_path}")
+        except Exception as e:
+            logging.error(f"Erro ao salvar arquivos .tex e .bib: {e}")
+            return "", ""
+
+        return tex_file_path, bib_file_path
 
     def compile_tex_to_pdf(self, tex_file_path: str) -> str:
         """
-        Compila o arquivo .tex em um arquivo PDF usando pdflatex e retorna o caminho do PDF gerado.
+        Compila o arquivo LaTeX para PDF.
 
         Parâmetros:
-        tex_file_path (str): Caminho completo do arquivo .tex a ser compilado.
+        tex_file_path (str): Caminho do arquivo .tex.
 
         Retorna:
-        str: Caminho completo do arquivo PDF gerado ou uma string vazia em caso de erro.
+        str: Caminho do PDF gerado ou string vazia em caso de erro.
         """
         try:
             subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
             pdf_file_path = os.path.splitext(tex_file_path)[0] + ".pdf"
-            
+
             if os.path.exists(pdf_file_path):
-                print(f"PDF file generated: {pdf_file_path}")
+                logging.info(f"PDF gerado com sucesso: {pdf_file_path}")
                 return pdf_file_path
             else:
-                print(f"Erro: PDF não foi gerado.")
+                logging.error("Erro: PDF não foi gerado.")
                 return ""
         except subprocess.CalledProcessError as e:
             logging.error(f"Erro ao compilar o arquivo LaTeX: {e}")
             return ""
 
-    def review_tex_content(self, tex_content: str, model="gpt-4-0125-preview") -> str:
+    def generate_and_compile_document(self, summaries=None, bib_content=None) -> str:
         """
-        Envia o conteúdo LaTeX para revisão por um modelo GPT e armazena o resultado em cache no banco de dados.
+        Gera um documento LaTeX e compila-o para PDF.
 
         Parâmetros:
-        tex_content (str): Conteúdo LaTeX a ser revisado.
-        model (str): Modelo GPT a ser utilizado para a revisão.
+        summaries (dict, opcional): Dicionário com os resumos.
+        bib_content (str, opcional): Conteúdo BibTeX.
 
         Retorna:
-        str: Conteúdo revisado após a análise do modelo GPT.
+        str: Caminho do PDF gerado ou string vazia em caso de erro.
         """
-        conn = sqlite3.connect(f'databases/{self.db_name}')
-        cursor = conn.cursor()
+        if summaries is None or bib_content is None:
+            summaries, bib_content = self.fetch_summaries_and_sources()
 
-        arg_hash = hashlib.sha256(tex_content.encode("utf-8")).hexdigest()
-        cursor.execute(f'SELECT review_content FROM tex_reviews WHERE hash = ?', (arg_hash,))
-        review = cursor.fetchone()
+        if not summaries:
+            logging.error("Nenhum resumo disponível para gerar o documento.")
+            return ""
 
-        if review:
-            logging.info(f"Revisão encontrada em cache para hash {arg_hash}.")
-            return review[0]
-
-        prompt = f"Revisar o seguinte conteúdo gerado, garantindo consistência e correção:\n{tex_content}"
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=model
-        )
-
-        reviewed_content = response['choices'][0]['message']['content']
-
-        cursor.execute(f"INSERT INTO tex_reviews (hash, review_content) VALUES (?, ?)", (arg_hash, reviewed_content))
-        conn.commit()
-        conn.close()
-
-        return reviewed_content
-
-    def generate_and_compile_document(self, db_data: list):
-        """
-        Gera um documento LaTeX a partir dos dados do banco, revisa o conteúdo, salva em um arquivo .tex e compila para PDF.
-
-        Parâmetros:
-        db_data (list): Lista contendo dados do banco que serão utilizados nas seções do documento.
-
-        Retorna:
-        str: Caminho completo do arquivo PDF gerado ou uma string vazia em caso de erro.
-        """
         # Cria o documento LaTeX
-        doc = self.create_tex_document(db_data)
-        tex_file_path = self.save_tex_file(doc)
-        
-        # Faz a revisão do conteúdo LaTeX gerado
-        reviewed_content = self.review_tex_content(tex_file_path)
-        
-        # Salva o conteúdo revisado antes de compilar
-        with open(tex_file_path, 'w', encoding='utf-8') as f:
-            f.write(reviewed_content)
-        
-        # Compila para PDF
+        doc = self.create_tex_document(summaries, bib_content)
+        tex_content = doc.dumps()
+
+        # Salva os arquivos .tex e .bib
+        tex_file_path, bib_file_path = self.save_files(tex_content, bib_content)
+        if not tex_file_path or not bib_file_path:
+            logging.error("Erro ao salvar arquivos .tex ou .bib.")
+            return ""
+
+        # Compila o arquivo .tex para PDF
         pdf_file_path = self.compile_tex_to_pdf(tex_file_path)
         return pdf_file_path
