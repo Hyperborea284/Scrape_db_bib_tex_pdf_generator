@@ -5,7 +5,6 @@ from datetime import datetime
 from DatabaseUtils import DatabaseUtils, LinkManager
 from SummarizerManager import SummarizerManager
 from LlamaQueryEngine import LlamaDatabaseQuery
-from PDFGenerator import PDFGenerator
 from TexGenerator import TexGenerator
 from BibGenerator import BibGenerator
 
@@ -55,7 +54,6 @@ class Main:
         self.db_utils = DatabaseUtils(caminho_banco)
         self.link_manager = LinkManager(caminho_banco)
         self.query_engine = LlamaDatabaseQuery()
-        self.pdf_generator = PDFGenerator()
 
         # Verifica e garante a criação de tabelas necessárias
         self.db_utils.create_and_populate_references_table()  # Garantir bib_references
@@ -144,29 +142,37 @@ class Main:
             # Etapa 1: Ativar sumarização
             print("Ativando sumarização e memoizando resultados...")
             summarizer = SummarizerManager(self.nome_banco)
-            summarizer.synthesize_content()  # Processa links e memoiza os resumos
-
+            summaries = summarizer.synthesize_content()  # Processa links e memoiza os resumos
+    
+            if not summaries:
+                print("Erro: Nenhum resumo foi gerado. Verifique os links no banco de dados.")
+                logging.error("Nenhum resumo foi gerado. Processo de geração interrompido.")
+                return
+    
             # Etapa 2: Gerar arquivo BibTeX
             print("Gerando arquivo BibTeX...")
             bib_generator = BibGenerator(self.nome_banco)
-            bib_file = bib_generator.generate_and_save_bib()
-
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")  # Geração de timestamp
+            bib_file = bib_generator.generate_and_save_bib(timestamp)
+    
             if not bib_file:
                 print("Erro ao gerar o arquivo BibTeX.")
+                logging.error("Erro ao gerar o arquivo BibTeX.")
                 return
-
+    
             # Etapa 3: Gerar PDF
             print("Gerando PDF a partir dos dados...")
             tex_generator = TexGenerator(self.nome_banco)
-            summaries = tex_generator.fetch_summaries_and_sources()[0]
-            pdf_path = tex_generator.generate_and_compile_document(summaries)
-
+            pdf_path = tex_generator.generate_and_compile_document()
+    
             if pdf_path:
                 print(f"PDF gerado com sucesso: {pdf_path}")
             else:
                 print("Erro ao gerar o PDF.")
+                logging.error("Erro ao gerar o PDF.")
         except Exception as e:
             print(f"Erro ao gerar o PDF: {e}")
+            logging.error(f"Erro geral no processo de geração de PDF: {e}")
 
     def consultar_db_llama(self):
         """
@@ -178,6 +184,7 @@ class Main:
             self.query_engine.run_interactive_session()
         except Exception as e:
             print(f"Erro ao iniciar sessão de consulta: {e}")
+            logging.error(f"Erro na consulta interativa: {e}")
 
     def menu_principal(self):
         """

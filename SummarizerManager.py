@@ -47,7 +47,7 @@ class SummarizerManager:
     def synthesize_content(self) -> List[str]:
         """
         Faz a síntese de conteúdo para diferentes tipos de resumos e armazena no banco de dados.
-
+        
         Retorna:
         List[str]: Lista de resumos gerados.
         """
@@ -55,21 +55,64 @@ class SummarizerManager:
         try:
             # Recupera os textos limpos dos links para a síntese
             all_entries = self.db_utils.fetch_cleaned_texts()
-            entries = [entry[0] for entry in all_entries] if all_entries else []
-
-            # Gera os resumos para cada seção usando o PromptProcessor
+    
+            # Verificação de entradas
+            if not all_entries:
+                logging.warning("Nenhuma entrada encontrada no banco de dados para síntese.")
+                return summaries
+    
+            # Log para verificar os dados recuperados
+            logging.info(f"Total de entradas recuperadas: {len(all_entries)}")
+    
+            # Processamento das entradas
+            entries = []
+            for entry in all_entries:
+                logging.info(f"Verificando entrada: {entry}")  # Log para inspecionar cada entrada
+                if isinstance(entry, tuple) and len(entry) > 0 and entry[0]:
+                    entries.append(entry[0])
+                else:
+                    logging.warning(f"Entrada inválida encontrada e ignorada: {entry}")
+    
+            logging.info(f"Entradas válidas para gerar resumos: {entries}")
+    
+            if not entries:
+                logging.warning("Nenhuma entrada válida para gerar resumos.")
+                return summaries
+    
+            # Geração dos resumos
             for prompt_name in ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]:
                 method = getattr(self.prompts, prompt_name)
-                summary = method(entries)
-                summaries.append(summary)
-
-                # Salva apenas os novos resumos
-                if summary:
-                    self.db_utils.insert_summary(prompt_name, summary)
+    
+                # Validando entradas para os prompts
+                if not isinstance(entries, list) or not all(isinstance(text, str) for text in entries):
+                    logging.error(f"Entradas inválidas para o prompt '{prompt_name}': {entries}")
+                    continue
+    
+                try:
+                    # Geração do resumo a partir da API
+                    summary = method(texts=entries, sources=entries)
+    
+                    if summary:
+                        summaries.append(summary)
+                        logging.info(f"Resumo gerado para {prompt_name}: {summary[:50]}...")
+    
+                        # Geração do hash para memoização
+                        prompt_hash = hashlib.sha256(str(entries).encode('utf-8')).hexdigest()
+    
+                        # Salvando o hash, o prompt e o resumo no banco de dados
+                        inserted = self.db_utils.insert_summary(prompt_name, entries, summary, prompt_hash)
+                        if not inserted:
+                            logging.warning(f"Resumo duplicado não foi inserido para {prompt_name}.")
+                    else:
+                        logging.warning(f"Resumo vazio para {prompt_name}.")
+                except Exception as e:
+                    logging.error(f"Erro ao processar resumo para {prompt_name}: {e}")
+    
         except sqlite3.Error as e:
             logging.error(f"Erro no banco de dados durante a síntese: {e}")
         except Exception as e:
             logging.error(f"Erro geral ao sintetizar conteúdo: {e}")
+    
         return summaries
 
     def get_token_price(self) -> float:

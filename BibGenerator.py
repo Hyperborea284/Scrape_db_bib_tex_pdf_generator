@@ -70,10 +70,13 @@ class BibGenerator:
             logging.error(f"Erro de integridade no conteúdo BibTeX: {e}")
             return False
 
-    def generate_and_save_bib(self) -> str:
+    def generate_and_save_bib(self, tex_timestamp: str) -> str:
         """
         Gera e salva o arquivo BibTeX com referências do banco de dados.
-
+    
+        Parâmetros:
+        tex_timestamp (str): Timestamp usado no nome do arquivo .tex correspondente.
+    
         Retorna:
         str: Caminho do arquivo BibTeX salvo ou uma string vazia em caso de erro.
         """
@@ -82,21 +85,26 @@ class BibGenerator:
             if not entries:
                 logging.warning("Nenhuma entrada encontrada para gerar o arquivo BibTeX.")
                 return ""
-
+    
             # Prepara as entradas BibTeX
             self.bib_database.entries = entries
             writer = BibTexWriter()
-
-            # Caminho do arquivo BibTeX
-            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            bib_path = os.path.join(self.output_dir, f"{timestamp}.bib")
-
+    
+            # Caminho do arquivo BibTeX (usando o mesmo timestamp do arquivo .tex)
+            bib_path = os.path.join(self.output_dir, f"{tex_timestamp}.bib")
+    
             # Salva o conteúdo BibTeX no arquivo
             with open(bib_path, "w", encoding="utf-8") as bib_file:
                 bib_file.write(writer.write(self.bib_database))
-
+    
+            # Verifica a integridade do arquivo BibTeX gerado
+            if not self.verify_bib_integrity(writer.write(self.bib_database)):
+                logging.error(f"Erro de integridade no arquivo BibTeX gerado: {bib_path}")
+                return ""
+    
             logging.info(f"Arquivo BibTeX salvo em: {bib_path}")
             return bib_path
         except Exception as e:
             logging.error(f"Erro ao gerar e salvar o arquivo BibTeX: {e}")
             return ""
+    
