@@ -288,6 +288,28 @@ class DatabaseUtils:
         finally:
             self.disconnect(conn)
 
+    def fetch_summaries(self, table_name: str) -> List[dict]:
+        """
+        Busca todos os resumos armazenados na tabela especificada.
+    
+        Parâmetros:
+        table_name (str): Nome da tabela de resumos.
+    
+        Retorna:
+        List[dict]: Lista de dicionários contendo os resumos.
+        """
+        query = f"SELECT id, hash_gpt3, summary_gpt3 FROM {table_name}"
+        try:
+            rows = self.execute_query(query)
+            summaries = [
+                {"id": row[0], "hash": row[1], "summary": row[2]} for row in rows if len(row) >= 3
+            ]
+            logging.info(f"Resumos recuperados da tabela {table_name}: {len(summaries)} encontrados.")
+            return summaries
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar resumos da tabela {table_name}: {e}")
+            return []
+
 class LinkManager:
     def __init__(self, db_name: str = "database.db"):
         """

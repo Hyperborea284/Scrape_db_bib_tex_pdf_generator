@@ -6,7 +6,7 @@ from pylatex import Document, Section, Command, NoEscape
 from pylatexenc.latexencode import UnicodeToLatexEncoder
 import subprocess
 import shutil
-from BibGenerator import BibGenerator 
+from BibGenerator import BibGenerator
 
 # Configuração do logger
 logging.basicConfig(filename='TexGenerator.log', level=logging.INFO,
@@ -60,10 +60,8 @@ class TexGenerator:
                 cursor.execute(query)
                 rows = cursor.fetchall()
     
-                # Verifica o formato das linhas retornadas
                 if rows:
-                    # Adiciona uma verificação extra para garantir que o conteúdo seja válido
-                    summaries[section] = [row[0] for row in rows if isinstance(row, tuple) and len(row) > 0 and row[0]]
+                    summaries[section] = [row[0] for row in rows if row[0]]
                 else:
                     summaries[section] = []
     
@@ -71,7 +69,7 @@ class TexGenerator:
     
             conn.close()
     
-            # Carregar o arquivo BibTeX correspondente
+            # Carregar o conteúdo do BibTeX
             bib_path = os.path.join(self.base_dir, f"{self.generate_timestamp()}.bib")
             if os.path.exists(bib_path):
                 with open(bib_path, 'r', encoding='utf-8') as f:
@@ -87,74 +85,57 @@ class TexGenerator:
     def create_tex_document(self, summaries: dict, tags: list, bib_path: str) -> Document:
         """
         Cria um documento LaTeX com os resumos e fontes fornecidos.
-    
-        Parâmetros:
-        summaries (dict): Dicionário com os resumos por seção.
-        tags (list): Lista de palavras-chave extraídas do banco de dados.
-        bib_path (str): Caminho do arquivo BibTeX.
-    
-        Retorna:
-        Document: Documento LaTeX.
         """
         doc = Document()
     
-        # Preâmbulo com pacotes e configurações
-        doc.preamble.append(NoEscape(r'\usepackage{lmodern}'))
-        doc.preamble.append(NoEscape(r'\usepackage[T1]{fontenc}'))
-        doc.preamble.append(NoEscape(r'\usepackage[utf8]{inputenc}'))
-        doc.preamble.append(NoEscape(r'\usepackage{indentfirst}'))
-        doc.preamble.append(NoEscape(r'\usepackage{nomencl}'))
-        doc.preamble.append(NoEscape(r'\usepackage{color}'))
-        doc.preamble.append(NoEscape(r'\usepackage{graphicx}'))
-        doc.preamble.append(NoEscape(r'\usepackage{microtype}'))
-        doc.preamble.append(NoEscape(r'\usepackage[brazilian,hyperpageref]{backref}'))
-        doc.preamble.append(NoEscape(r'\usepackage[alf]{abntex2cite}'))
+        # Preâmbulo
+        preamble = [
+            r'\usepackage[T1]{fontenc}',
+            r'\usepackage[utf8]{inputenc}',
+            r'\usepackage{lmodern}',
+            r'\usepackage{textcomp}',
+            r'\usepackage{lastpage}',
+            r'\usepackage{indentfirst}',
+            r'\usepackage{graphicx}',
+            r'\usepackage[alf]{abntex2cite}',
+            r'\usepackage[brazilian,hyperpageref]{backref}',
+            r'\usepackage{color}',
+            r'\usepackage{hyperref}',
+            r'\definecolor{blue}{RGB}{41,5,195}',
+            r'''
+            \hypersetup{
+                pdftitle={Relatório de Resumos},
+                pdfauthor={Ephor Linguística Computacional - Maringá - PR},
+                pdfsubject={Relatório gerado automaticamente},
+                colorlinks=true,
+                linkcolor=blue,
+                citecolor=blue,
+                filecolor=magenta,
+                urlcolor=blue
+            }
+            '''
+        ]
     
-        # Configurações de metadados e cores
-        doc.preamble.append(NoEscape(r'\definecolor{blue}{RGB}{41,5,195}'))
-        doc.preamble.append(NoEscape(r'''
-        \hypersetup{
-            pdftitle={Relatório de Resumos},
-            pdfauthor={Ephor Linguística Computacional - Maringá - PR},
-            pdfsubject={Relatório gerado automaticamente},
-            colorlinks=true,
-            linkcolor=blue,
-            citecolor=blue,
-            filecolor=magenta,
-            urlcolor=blue
-        }
-        '''))
+        for command in preamble:
+            doc.preamble.append(NoEscape(command))
     
-        # Título, autor e local
-        doc.preamble.append(Command("title", "Modelo Canônico de Artigo científico com \\abnTeX"))
-        doc.preamble.append(Command("author", "Ephor Linguística Computacional - Maringá - PR \\url{http://ephor.com.br/}"))
-        doc.preamble.append(Command("local", "Maringá - PR - Brasil"))
+        doc.preamble.append(Command("title", "Relatório de Resumos"))
+        doc.preamble.append(Command("author", "Ephor Linguística Computacional"))
         doc.preamble.append(Command("date", datetime.now().strftime("%Y-%m-%d")))
     
-        # Resumo
-        with doc.create(NoEscape(r'\begin{resumoumacoluna}')):
-            doc.append(NoEscape(r'''
-            Aviso Importante:
-            Este documento foi gerado usando processamento de linguística computacional auxiliado por inteligência artificial.
-            Portanto, este conteúdo requer revisão humana, pois pode conter erros.
-            '''))
-            if tags:
+        if tags:
+            with doc.create(Section("Palavras-chave")):
                 doc.append(NoEscape(r'\textbf{Palavras-chave}: ' + ', '.join(tags) + '.'))
     
-        # Corpo do texto
         for section, texts in summaries.items():
             with doc.create(Section(section.capitalize())):
                 for text in texts:
-                    if isinstance(text, str) and text.strip():  # Verifica se o texto é válido
-                        doc.append(self.encoder.unicode_to_latex(text))
-                    else:
-                        logging.warning(f"Texto inválido ignorado na seção '{section}': {text}")
+                    if text.strip():
+                        escaped_text = self.encoder.unicode_to_latex(text)
+                        doc.append(escaped_text)
     
-        # Bibliografia
         if bib_path and os.path.exists(bib_path):
             doc.append(NoEscape(r'\bibliography{' + os.path.splitext(os.path.basename(bib_path))[0] + '}'))
-        else:
-            logging.warning("Bibliografia não encontrada. O documento será gerado sem referências.")
     
         return doc
 
@@ -163,7 +144,7 @@ class TexGenerator:
         Salva os arquivos LaTeX (.tex) e BibTeX (.bib) com o mesmo timestamp.
         """
         tex_file_path = os.path.join(self.base_dir, f"{timestamp}.tex")
-        bib_file_path = os.path.join(self.base_dir, f"{timestamp}.bib")  # Ajustado para usar o mesmo caminho
+        bib_file_path = os.path.join(self.base_dir, f"{timestamp}.bib")
 
         try:
             with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
@@ -174,7 +155,7 @@ class TexGenerator:
                 bib_file.write(bib_content)
             logging.info(f"Arquivo BibTeX salvo: {bib_file_path}")
         except Exception as e:
-            logging.error(f"Erro ao salvar arquivos .tex e .bib: {e}")
+            logging.error(f"Erro ao salvar arquivos: {e}")
             return "", ""
 
         return tex_file_path, bib_file_path
@@ -182,15 +163,10 @@ class TexGenerator:
     def compile_tex_to_pdf(self, tex_file_path: str) -> str:
         """
         Compila o arquivo LaTeX para PDF.
-    
-        Parâmetros:
-        tex_file_path (str): Caminho do arquivo LaTeX (.tex).
-    
-        Retorna:
-        str: Caminho do PDF gerado, ou uma string vazia em caso de erro.
         """
         try:
-            subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
+            for _ in range(2):  # Executar duas vezes para resolver referências
+                subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
             pdf_file_path = os.path.splitext(tex_file_path)[0] + ".pdf"
             if os.path.exists(pdf_file_path):
                 logging.info(f"PDF gerado com sucesso: {pdf_file_path}")
@@ -207,16 +183,16 @@ class TexGenerator:
         Remove arquivos auxiliares gerados durante a compilação LaTeX.
         """
         base_name = os.path.splitext(os.path.basename(tex_file_path))[0]
-        aux_extensions = ['.aux', '.log', '.out', '.fls', '.fdb_latexmk', '.toc', '.synctex.gz', '.bbl', '.blg']
+        aux_extensions = ['.aux', '.log', '.out', '.fls', '.fdb_latexmk', '.toc', '.bbl', '.blg']
 
         for ext in aux_extensions:
             aux_file = os.path.join(self.base_dir, base_name + ext)
             if os.path.exists(aux_file):
                 try:
                     os.remove(aux_file)
-                    logging.info(f"Removed auxiliary file: {aux_file}")
+                    logging.info(f"Arquivo auxiliar removido: {aux_file}")
                 except OSError as e:
-                    logging.warning(f"Failed to remove {aux_file}: {e}")
+                    logging.warning(f"Falha ao remover {aux_file}: {e}")
 
     def generate_and_compile_document(self, summaries=None, bib_content=None) -> str:
         """
@@ -227,38 +203,29 @@ class TexGenerator:
         
         if summaries is None or bib_content is None:
             summaries, bib_content = self.fetch_summaries_and_sources()
+        
+        if not summaries or all(len(texts) == 0 for texts in summaries.values()):
+            logging.error("Nenhum resumo válido disponível para gerar o documento.")
+            # Cria um documento mínimo para evitar falha total
+            summaries = {"Aviso": ["Nenhum conteúdo disponível para gerar o PDF."]}
     
-        if not summaries:
-            logging.error("Nenhum resumo disponível para gerar o documento.")
-            return ""
-    
-        # Gera e salva o arquivo BibTeX
-        bib_file_path = os.path.join(self.base_dir, f"{timestamp}.bib")
-        try:
-            with open(bib_file_path, 'w', encoding='utf-8') as bib_file:
-                bib_file.write(bib_content)
-            logging.info(f"Arquivo BibTeX salvo: {bib_file_path}")
-        except Exception as e:
-            logging.error(f"Erro ao salvar arquivo BibTeX: {e}")
-            return ""
-    
-        # Cria o documento LaTeX
-        doc = self.create_tex_document(summaries, [], bib_file_path)
+        # Gera o arquivo LaTeX com conteúdo válido
+        doc = self.create_tex_document(summaries, [], None)
         tex_content = doc.dumps()
     
-        # Salva os arquivos .tex e .bib com o mesmo timestamp
-        tex_file_path = os.path.join(self.base_dir, f"{timestamp}.tex")
-        try:
-            with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
-                tex_file.write(tex_content)
-            logging.info(f"Arquivo LaTeX salvo: {tex_file_path}")
-        except Exception as e:
-            logging.error(f"Erro ao salvar arquivo LaTeX: {e}")
+        # Salva os arquivos .tex e .bib
+        tex_file_path, bib_file_path = self.save_files(tex_content, bib_content, timestamp)
+    
+        if not tex_file_path:
+            logging.error("Erro ao salvar o arquivo LaTeX.")
             return ""
     
-        # Compila o arquivo .tex para PDF
+        # Compila o arquivo LaTeX para PDF
         pdf_file_path = self.compile_tex_to_pdf(tex_file_path)
+    
         if pdf_file_path:
             self.cleanup_auxiliary_files(tex_file_path)
+        else:
+            logging.error("Erro durante a compilação do PDF.")
+        
         return pdf_file_path
-    

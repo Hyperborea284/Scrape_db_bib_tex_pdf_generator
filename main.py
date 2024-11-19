@@ -7,6 +7,7 @@ from SummarizerManager import SummarizerManager
 from LlamaQueryEngine import LlamaDatabaseQuery
 from TexGenerator import TexGenerator
 from BibGenerator import BibGenerator
+from TexGenerator import TexGenerator
 
 # Configuração de logging
 logging.basicConfig(filename='main.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -139,14 +140,19 @@ class Main:
         """
         print("\nGerando PDF com os dados registrados...")
         try:
-            # Etapa 1: Ativar sumarização
+            # Etapa 1: Ativar sumarização ou carregar resumos existentes
             print("Ativando sumarização e memoizando resultados...")
             summarizer = SummarizerManager(self.nome_banco)
             summaries = summarizer.synthesize_content()  # Processa links e memoiza os resumos
     
             if not summaries:
-                print("Erro: Nenhum resumo foi gerado. Verifique os links no banco de dados.")
-                logging.error("Nenhum resumo foi gerado. Processo de geração interrompido.")
+                print("Erro: Nenhum resumo novo foi gerado. Verificando se existem resumos já armazenados.")
+                logging.error("Nenhum resumo foi gerado. Carregando resumos existentes do banco.")
+                summaries = summarizer.db_utils.fetch_all_existing_summaries()  # Carregar resumos existentes
+    
+            if not summaries:
+                print("Erro: Nenhum resumo disponível para gerar o PDF.")
+                logging.error("Nenhum resumo disponível. Processo de geração interrompido.")
                 return
     
             # Etapa 2: Gerar arquivo BibTeX
@@ -163,7 +169,7 @@ class Main:
             # Etapa 3: Gerar PDF
             print("Gerando PDF a partir dos dados...")
             tex_generator = TexGenerator(self.nome_banco)
-            pdf_path = tex_generator.generate_and_compile_document()
+            pdf_path = tex_generator.generate_and_compile_document(summaries=summaries, bib_content=None)
     
             if pdf_path:
                 print(f"PDF gerado com sucesso: {pdf_path}")

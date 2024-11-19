@@ -48,8 +48,9 @@ class SummarizerManager:
     def synthesize_content(self) -> List[str]:
         """
         Faz a síntese de conteúdo para diferentes tipos de resumos e armazena no banco de dados.
+        Utiliza resumos existentes caso já estejam armazenados.
         """
-        summaries = []
+        summaries = {}
         try:
             logging.info("Iniciando recuperação de entradas do banco...")
             all_entries = self.db_utils.fetch_cleaned_texts()
@@ -61,6 +62,22 @@ class SummarizerManager:
     
             for prompt_name in ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]:
                 description = f"Resumo para a seção {prompt_name}"
+    
+                # Verifica se já existem resumos na tabela
+                logging.info(f"Verificando resumos existentes para a seção: {prompt_name}")
+                existing_summaries = self.db_utils.fetch_summaries(prompt_name)
+                if existing_summaries:
+                    logging.info(f"Resumos já existentes encontrados para {prompt_name}. Utilizando os resumos existentes.")
+                    summaries[prompt_name] = [entry["summary"] for entry in existing_summaries]
+                    continue
+    
+                # Solicitar autorização antes de ativar o prompt
+                logging.info(f"Solicitando autorização para ativar o prompt: {prompt_name}")
+                user_confirmation = input(f"Deseja ativar o prompt para a seção '{prompt_name}'? (s/n): ").lower()
+                if user_confirmation != 's':
+                    logging.info(f"Operação cancelada pelo usuário para a seção {prompt_name}.")
+                    continue
+    
                 logging.info(f"Processando resumo para: {prompt_name}")
                 try:
                     # Gera o resumo usando _generate_summary
@@ -70,7 +87,7 @@ class SummarizerManager:
                         continue  # Continua com o próximo resumo
     
                     logging.info(f"Resumo gerado para {prompt_name}: {summary[:50]}")
-                    summaries.append(summary)
+                    summaries[prompt_name] = [summary]
                     combined_text = " ".join(all_entries)
                     prompt_hash = hashlib.sha256(combined_text.encode('utf-8')).hexdigest()
                     logging.info(f"Salvando resumo no banco com hash: {prompt_hash}")
