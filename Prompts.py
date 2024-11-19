@@ -4,8 +4,11 @@ from EntityProtoProcessor import EntityProtoProcessor
 from DatabaseUtils import memoize_to_db, DatabaseUtils
 
 # Configuração do logger para registrar eventos e erros em 'Prompts.log'
-logging.basicConfig(filename='Prompts.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    filename='Prompts.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 class PromptProcessor:
@@ -21,32 +24,34 @@ class PromptProcessor:
 
     def _generate_prompt_with_entities(self, section_name: str, texts: List[str], description: str, sources: List[str]) -> str:
         """
-        Gera o prompt completo, incluindo a análise de entidades extraídas e as fontes relacionadas.
+        Gera o prompt completo, incluindo a análise de entidades e fontes.
         """
         try:
-            # Verificação rigorosa de entradas
-            if not texts or not all(isinstance(text, str) for text in texts):
-                logging.error(f"Entradas inválidas para '{section_name}': {texts}")
-                return ""
-    
-            if not sources or not all(isinstance(source, str) for source in sources):
-                logging.error(f"Fontes inválidas fornecidas para '{section_name}': {sources}")
-                return ""
-    
             combined_text = " ".join(texts)
-            entities, _, _, _ = self.entity_processor.extract_entities(combined_text)
+            logging.info(f"Texto combinado para '{section_name}': {combined_text}")
     
-            entities_info = "\n".join([f"- {entity[0]} ({entity[1]})" for entity in entities])
-            entities_section = f"\nEntidades identificadas no texto:\n{entities_info}" if entities else "\nNenhuma entidade identificada."
+            processed_result = self.entity_processor.process_text(combined_text)
+            entities = processed_result.get("entities", [])
+            logging.info(f"Entidades identificadas para '{section_name}': {entities}")
     
-            sources_info = "\n".join([f"- {source}" for source in sources])
-            sources_section = f"\nFontes utilizadas:\n{sources_info}" if sources else "\nNenhuma fonte disponível."
+            entities_info = (
+                "\n".join([f"- {entity}" for entity in entities])
+                if entities
+                else "Nenhuma entidade identificada."
+            )
+            sources_info = (
+                "\n".join([f"- {source}" for source in sources])
+                if sources
+                else "Nenhuma fonte disponível."
+            )
     
             prompt = f"""
     Seção: {section_name}
     Descrição: {description}
-    {entities_section}
-    {sources_section}
+    Entidades identificadas no texto:
+    {entities_info}
+    Fontes utilizadas:
+    {sources_info}
     
     Gere um resumo considerando apenas as informações disponíveis acima.
     """

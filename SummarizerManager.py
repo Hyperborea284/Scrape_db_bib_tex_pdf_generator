@@ -1,6 +1,7 @@
 import hashlib
 import sqlite3
 import os
+import requests
 from typing import List, Optional, Dict, Tuple
 from openai import OpenAI
 from functools import wraps
@@ -47,137 +48,98 @@ class SummarizerManager:
     def synthesize_content(self) -> List[str]:
         """
         Faz a síntese de conteúdo para diferentes tipos de resumos e armazena no banco de dados.
-        
-        Retorna:
-        List[str]: Lista de resumos gerados.
         """
         summaries = []
         try:
-            # Recupera os textos limpos dos links para a síntese
+            logging.info("Iniciando recuperação de entradas do banco...")
             all_entries = self.db_utils.fetch_cleaned_texts()
+            logging.info(f"Entradas recuperadas: {all_entries}")
     
-            # Verificação de entradas
             if not all_entries:
                 logging.warning("Nenhuma entrada encontrada no banco de dados para síntese.")
                 return summaries
     
-            # Log para verificar os dados recuperados
-            logging.info(f"Total de entradas recuperadas: {len(all_entries)}")
-    
-            # Processamento das entradas
-            entries = []
-            for entry in all_entries:
-                logging.info(f"Verificando entrada: {entry}")  # Log para inspecionar cada entrada
-                if isinstance(entry, tuple) and len(entry) > 0 and entry[0]:
-                    entries.append(entry[0])
-                else:
-                    logging.warning(f"Entrada inválida encontrada e ignorada: {entry}")
-    
-            logging.info(f"Entradas válidas para gerar resumos: {entries}")
-    
-            if not entries:
-                logging.warning("Nenhuma entrada válida para gerar resumos.")
-                return summaries
-    
-            # Geração dos resumos
             for prompt_name in ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]:
-                method = getattr(self.prompts, prompt_name)
-    
-                # Validando entradas para os prompts
-                if not isinstance(entries, list) or not all(isinstance(text, str) for text in entries):
-                    logging.error(f"Entradas inválidas para o prompt '{prompt_name}': {entries}")
-                    continue
-    
+                description = f"Resumo para a seção {prompt_name}"
+                logging.info(f"Processando resumo para: {prompt_name}")
                 try:
-                    # Geração do resumo a partir da API
-                    summary = method(texts=entries, sources=entries)
+                    # Gera o resumo usando _generate_summary
+                    summary = self._generate_summary(prompt_name, all_entries, description)
+                    if not summary:
+                        logging.warning(f"Resumo cancelado ou não gerado para {prompt_name}.")
+                        continue  # Continua com o próximo resumo
     
-                    if summary:
-                        summaries.append(summary)
-                        logging.info(f"Resumo gerado para {prompt_name}: {summary[:50]}...")
-    
-                        # Geração do hash para memoização
-                        prompt_hash = hashlib.sha256(str(entries).encode('utf-8')).hexdigest()
-    
-                        # Salvando o hash, o prompt e o resumo no banco de dados
-                        inserted = self.db_utils.insert_summary(prompt_name, entries, summary, prompt_hash)
-                        if not inserted:
-                            logging.warning(f"Resumo duplicado não foi inserido para {prompt_name}.")
-                    else:
-                        logging.warning(f"Resumo vazio para {prompt_name}.")
+                    logging.info(f"Resumo gerado para {prompt_name}: {summary[:50]}")
+                    summaries.append(summary)
+                    combined_text = " ".join(all_entries)
+                    prompt_hash = hashlib.sha256(combined_text.encode('utf-8')).hexdigest()
+                    logging.info(f"Salvando resumo no banco com hash: {prompt_hash}")
+                    self.db_utils.insert_summary(prompt_name, combined_text, summary, prompt_hash)
                 except Exception as e:
                     logging.error(f"Erro ao processar resumo para {prompt_name}: {e}")
-    
-        except sqlite3.Error as e:
-            logging.error(f"Erro no banco de dados durante a síntese: {e}")
         except Exception as e:
             logging.error(f"Erro geral ao sintetizar conteúdo: {e}")
-    
         return summaries
 
     def get_token_price(self) -> float:
         """
-        Verifica o preço atual dos tokens da API e retorna o valor em dólares por 1000 tokens.
-
-        Retorna:
-        float: Preço por 1000 tokens.
+        Retorna o preço fixo por 1000 tokens.
         """
-        try:
-            response = requests.get("https://api.openai.com/v1/pricing")
-            response.raise_for_status()
-            pricing_data = response.json()
-            price_per_1000_tokens = pricing_data.get("usd_per_1000_tokens", {}).get(self.model_name_gpt3, 0.02)
-            return price_per_1000_tokens
-        except requests.RequestException as e:
-            logging.error(f"Erro ao obter o preço dos tokens: {e}")
-            return 0.02
+        logging.info("Usando preço fixo de $0.02 por 1000 tokens.")
+        return 0.02  # Preço fixo
 
     def display_cost_estimate(self, token_count: int) -> bool:
         """
         Calcula e exibe uma estimativa de custo baseado no número de tokens e solicita confirmação do usuário.
-
+    
         Parâmetros:
         token_count (int): Número de tokens estimados.
-
+    
         Retorna:
         bool: True se o usuário confirmar a continuidade, False caso contrário.
         """
-        token_price = self.get_token_price()
-        estimated_cost = (token_count / 1000) * token_price
-        print(f"\n=== Estimativa de Custo ===")
-        print(f"Tokens estimados: {token_count}")
-        print(f"Custo estimado: ${estimated_cost:.4f}")
-        confirm = input("Deseja continuar com a geração do resumo? (s/n): ").lower()
-        return confirm == 's'
+        try:
+            token_price = self.get_token_price()
+            estimated_cost = (token_count / 1000) * token_price
+            logging.info(f"Tokens estimados: {token_count}, custo estimado: ${estimated_cost:.4f}")
+            print(f"\n=== Estimativa de Custo ===")
+            print(f"Tokens estimados: {token_count}")
+            print(f"Custo estimado: ${estimated_cost:.4f}")
+            confirm = input("Deseja continuar com a geração do resumo? (s/n): ").lower()
+            return confirm == 's'
+        except Exception as e:
+            logging.error(f"Erro ao calcular a estimativa de custo: {e}")
+            return False
 
     def _generate_summary(self, section_name: str, texts: List[str], description: str) -> str:
         """
         Gera um resumo baseado em uma lista de textos e uma descrição do tipo de resumo.
-
-        Parâmetros:
-        section_name (str): Nome da seção.
-        texts (List[str]): Lista de textos.
-        description (str): Descrição do tipo de resumo.
-
-        Retorna:
-        str: Resumo gerado.
         """
         try:
+            logging.info(f"Iniciando geração de resumo para a seção {section_name}.")
             messages = [{"role": "user", "content": f"Provide a {description} for the following texts:"}]
             for text in texts:
                 messages.append({"role": "user", "content": text.strip()})
-
+            logging.info(f"Mensagens para a seção {section_name}: {messages}")
+    
+            # Divide mensagens em seções e calcula estimativa de tokens
             sections, remaining_sections = self.split_message_into_sections(messages)
             estimated_tokens = sum(len(msg["content"].split()) for msg in sections)
+            logging.info(f"Tokens estimados para {section_name}: {estimated_tokens}")
+    
             if not self.display_cost_estimate(estimated_tokens):
                 logging.info("Operação cancelada pelo usuário.")
                 return ""
-
+    
+            # Gera o resumo principal
             summary_text = self.generate_response(sections)
-
+            logging.info(f"Resumo gerado para a seção {section_name}: {summary_text[:50]}")
+    
+            # Processa seções restantes
             if remaining_sections:
+                logging.info(f"Processando seções excedentes para {section_name}.")
                 self.process_remaining_sections(remaining_sections, section_name)
-
+    
             return summary_text
         except Exception as e:
             logging.error(f"Erro ao gerar resumo para {section_name}: {e}")
@@ -221,10 +183,10 @@ class SummarizerManager:
     def generate_response(self, messages: List[Dict[str, str]]) -> str:
         """
         Envia solicitação para a API OpenAI para gerar o resumo.
-
+    
         Parâmetros:
         messages (List[Dict[str, str]]): Mensagens para enviar.
-
+    
         Retorna:
         str: Conteúdo do resumo gerado.
         """
@@ -234,7 +196,19 @@ class SummarizerManager:
                 model=self.model_name_gpt3,
                 max_tokens=self.target_summary_size
             )
-            return response['choices'][0]['message']['content']
+    
+            # Verifica se o retorno contém a chave 'choices'
+            if hasattr(response, 'choices') and len(response.choices) > 0:
+                first_choice = response.choices[0]
+                if hasattr(first_choice, 'message') and hasattr(first_choice.message, 'content'):
+                    generated_message = first_choice.message.content
+                    logging.info(f"Resposta da API: {generated_message[:50]}")
+                    return generated_message
+            logging.warning("A resposta da API não contém conteúdo gerado.")
+            return ""
+        except AttributeError as e:
+            logging.error(f"Formato inesperado na resposta da API: {e}")
+            return ""
         except Exception as e:
             logging.error(f"Erro ao gerar resposta da API: {e}")
             return ""

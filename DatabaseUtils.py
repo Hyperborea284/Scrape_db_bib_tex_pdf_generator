@@ -25,40 +25,41 @@ def memoize_to_db(table_name: str):
             if db_utils is None or not hasattr(db_utils, "connect"):
                 raise AttributeError("O objeto decorado deve possuir um atributo 'db_utils' com um método 'connect'.")
 
-            prompt = str(args[0])  # Assume que o prompt é o primeiro argumento
+            prompt = str(args[0])  # Usa o primeiro argumento como string (prompt)
             prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
 
-            conn = None
             try:
-                conn = db_utils.connect()
-                cursor = conn.cursor()
+                with db_utils.connect() as conn:
+                    cursor = conn.cursor()
+                    logging.info(f"Verificando resumo no banco para hash: {prompt_hash}")
+                    cursor.execute(f"SELECT summary_gpt3 FROM {table_name} WHERE hash_gpt3 = ?", (prompt_hash,))
+                    result = cursor.fetchone()
 
-                # Verifica se o resumo já existe no banco de dados
-                cursor.execute(f"SELECT summary_gpt3 FROM {table_name} WHERE hash_gpt3 = ?", (prompt_hash,))
-                row = cursor.fetchone()
-                if row:
-                    logging.info(f"Memoization hit for {table_name} (hash: {prompt_hash}).")
-                    return row[0]
+                    # Verifica se o resultado é válido
+                    if result and isinstance(result, (list, tuple)) and len(result) > 0:
+                        summary = result[0]
+                        if summary:
+                            logging.info(f"Resumo encontrado no banco para hash: {prompt_hash}")
+                            return summary
 
-                # Executa a função e insere o resultado
-                result = func(self, *args, **kwargs)
-                if result:
-                    cursor.execute(
-                        f"INSERT INTO {table_name} (hash_gpt3, prompt, summary_gpt3) VALUES (?, ?, ?)",
-                        (prompt_hash, prompt, result)
-                    )
-                    conn.commit()
-                    logging.info(f"Resumo memoizado na tabela {table_name} (hash: {prompt_hash}).")
-                return result
-            except sqlite3.Error as e:
-                logging.error(f"Erro ao memoizar dados na tabela {table_name}: {e}")
+                    # Executa a função decorada
+                    result = func(self, *args, **kwargs)
+                    logging.info(f"Resultado da função decorada: {result}")
+
+                    if result:
+                        cursor.execute(
+                            f"INSERT INTO {table_name} (hash_gpt3, prompt, summary_gpt3) VALUES (?, ?, ?)",
+                            (prompt_hash, prompt, result)
+                        )
+                        conn.commit()
+                        logging.info(f"Resumo memoizado no banco com hash: {prompt_hash}")
+                    return result
+            except sqlite3.Error as db_error:
+                logging.error(f"Erro de banco de dados no decorador memoize_to_db: {db_error}")
                 return None
             except Exception as e:
-                logging.error(f"Erro inesperado no decorador memoize_to_db: {e}")
+                logging.error(f"Erro geral no decorador memoize_to_db: {e}")
                 return None
-            finally:
-                if conn:
-                    db_utils.disconnect(conn)
         return wrapped
     return decorator
 
@@ -176,16 +177,15 @@ class DatabaseUtils:
         finally:
             self.disconnect(conn)
 
-    def insert_link(self, link_data: dict) -> bool:
+    def insert_link(self, link_data: Dict[str, str]) -> bool:
         """
-        Insere link.
+        Insere um novo link na tabela 'links', com dados no formato correto.
         """
         query = '''
-        INSERT OR IGNORE INTO links (
-            link, cleaned_text, authors, domain, publish_date,
-            meta_description, title, tags, schema, opengraph
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO links (link, cleaned_text, authors, domain, publish_date, meta_description, title, tags, schema, opengraph)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
+        # Apenas garantir que o conteúdo de 'cleaned_text' seja usado como está, sem validações adicionais.
         params = (
             link_data.get("link"),
             link_data.get("cleaned_text"),
@@ -242,14 +242,20 @@ class DatabaseUtils:
 
     def fetch_cleaned_texts(self) -> List[str]:
         """
-        Busca textos limpos e retorna como uma lista de strings.
+        Recupera os textos limpos da tabela 'links'.
         """
         query = "SELECT cleaned_text FROM links WHERE cleaned_text IS NOT NULL"
         rows = self.execute_query(query)
-        # Transformar os resultados em uma lista de strings simples
-        cleaned_texts = [row[0] for row in rows if isinstance(row[0], str) and row[0].strip()]
-        logging.info(f"Entradas limpas recuperadas: {cleaned_texts}")
-        return cleaned_texts
+        logging.info(f"Linhas retornadas do banco: {rows}")
+    
+        try:
+            # Trabalha diretamente com listas de strings
+            cleaned_texts = [str(row[0]) for row in rows if row and isinstance(row[0], str)]
+            logging.info(f"Entradas limpas recuperadas: {cleaned_texts}")
+            return cleaned_texts
+        except Exception as e:
+            logging.error(f"Erro ao processar linhas do banco: {e}")
+            return []
 
     def create_and_populate_references_table(self):
         """
