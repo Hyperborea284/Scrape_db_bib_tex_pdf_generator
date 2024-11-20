@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from datetime import datetime
 from pylatex import Document, Section, Command, NoEscape
-from pylatexenc.latexencode import UnicodeToLatexEncoder
+from pylatexenc.latexencode import UnicodeToLatexEncoder, unicode_to_latex
 import subprocess
 import shutil
 from BibGenerator import BibGenerator
@@ -11,7 +11,6 @@ from BibGenerator import BibGenerator
 # Configuração do logger
 logging.basicConfig(filename='TexGenerator.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 class TexGenerator:
     """
@@ -25,9 +24,15 @@ class TexGenerator:
         """
         self.db_name = os.path.join(os.getcwd(), "databases", os.path.basename(db_name))
         os.makedirs(self.base_dir, exist_ok=True)
-        self.encoder = UnicodeToLatexEncoder(unknown_char_policy='replace')
+        
+        # Configuração do encoder com política de substituição e ajuste para apenas caracteres não-ASCII
+        self.encoder = UnicodeToLatexEncoder(
+            unknown_char_policy="replace",  # Substitui caracteres não mapeados por LaTeX
+            non_ascii_only=True            # Escapa apenas caracteres fora do ASCII
+        )
+        
         self.bib_generator = BibGenerator(db_name)
-
+        
     @staticmethod
     def generate_timestamp() -> str:
         """
@@ -87,8 +92,8 @@ class TexGenerator:
         Cria um documento LaTeX com os resumos e fontes fornecidos.
         """
         doc = Document()
-    
-        # Preâmbulo
+        
+        # Preâmbulo otimizado
         preamble = [
             r'\usepackage[T1]{fontenc}',
             r'\usepackage[utf8]{inputenc}',
@@ -101,8 +106,10 @@ class TexGenerator:
             r'\usepackage[brazilian,hyperpageref]{backref}',
             r'\usepackage{color}',
             r'\usepackage{hyperref}',
-            r'\definecolor{blue}{RGB}{41,5,195}',
+            r'\usepackage{microtype}',
+            r'\sloppy',
             r'''
+            \definecolor{blue}{RGB}{41,5,195}
             \hypersetup{
                 pdftitle={Relatório de Resumos},
                 pdfauthor={Ephor Linguística Computacional - Maringá - PR},
@@ -115,28 +122,31 @@ class TexGenerator:
             }
             '''
         ]
-    
+        
         for command in preamble:
             doc.preamble.append(NoEscape(command))
-    
+        
         doc.preamble.append(Command("title", "Relatório de Resumos"))
         doc.preamble.append(Command("author", "Ephor Linguística Computacional"))
         doc.preamble.append(Command("date", datetime.now().strftime("%Y-%m-%d")))
-    
+        
         if tags:
             with doc.create(Section("Palavras-chave")):
                 doc.append(NoEscape(r'\textbf{Palavras-chave}: ' + ', '.join(tags) + '.'))
-    
+        
+        # Processamento seguro do conteúdo
         for section, texts in summaries.items():
             with doc.create(Section(section.capitalize())):
                 for text in texts:
                     if text.strip():
-                        escaped_text = self.encoder.unicode_to_latex(text)
-                        doc.append(escaped_text)
-    
+                        # Evita aplicar escaping redundante, corrigindo diretamente o Unicode problemático
+                        escaped_text = unicode_to_latex(text, unknown_char_policy="replace")  # Substituir caracteres desconhecidos
+                        doc.append(NoEscape(escaped_text))
+        
+        # Adiciona referências bibliográficas, se aplicável
         if bib_path and os.path.exists(bib_path):
             doc.append(NoEscape(r'\bibliography{' + os.path.splitext(os.path.basename(bib_path))[0] + '}'))
-    
+        
         return doc
 
     def save_files(self, tex_content: str, bib_content: str, timestamp: str) -> tuple:
@@ -183,7 +193,7 @@ class TexGenerator:
         Remove arquivos auxiliares gerados durante a compilação LaTeX.
         """
         base_name = os.path.splitext(os.path.basename(tex_file_path))[0]
-        aux_extensions = ['.aux', '.log', '.out', '.fls', '.fdb_latexmk', '.toc', '.bbl', '.blg']
+        aux_extensions = ['.aux', '.out', '.fls', '.fdb_latexmk', '.toc', '.bbl', '.blg']
 
         for ext in aux_extensions:
             aux_file = os.path.join(self.base_dir, base_name + ext)
