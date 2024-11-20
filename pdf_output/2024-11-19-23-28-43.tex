@@ -1,4 +1,4 @@
-\documentclass{article}%
+\documentclass[article,11pt,oneside,a4paper,brazil,sumario=tradicional]{abntex2}%
 \usepackage[T1]{fontenc}%
 \usepackage[utf8]{inputenc}%
 \usepackage{lmodern}%
@@ -8,35 +8,49 @@
 \usepackage[T1]{fontenc}%
 \usepackage[utf8]{inputenc}%
 \usepackage{lmodern}%
-\usepackage{textcomp}%
-\usepackage{lastpage}%
 \usepackage{indentfirst}%
 \usepackage{graphicx}%
-\usepackage[alf]{abntex2cite}%
-\usepackage[brazilian,hyperpageref]{backref}%
 \usepackage{color}%
-\usepackage{hyperref}%
 \usepackage{microtype}%
-\sloppy%
+\usepackage{lipsum}%
+\usepackage[brazilian,hyperpageref]{backref}%
+\usepackage[alf]{abntex2cite}%
 
             \definecolor{blue}{RGB}{41,5,195}
             \hypersetup{
-                pdftitle={Relatório de Resumos},
+                pdftitle={Modelo Canônico de Artigo Científico com abnTeX},
                 pdfauthor={Ephor Linguística Computacional - Maringá - PR},
                 pdfsubject={Relatório gerado automaticamente},
+                pdfkeywords={abnt, latex, abntex, abntex2, artigo científico},
                 colorlinks=true,
                 linkcolor=blue,
                 citecolor=blue,
-                filecolor=magenta,
                 urlcolor=blue
             }
             %
-\title{Relatório de Resumos}%
-\author{Ephor Linguística Computacional}%
-\date{2024{-}11{-}19}%
+\newcommand{\theforeigntitle}{Título genérico}%
+\title{Modelo Canônico de Artigo Científico com abnTeX}%
+\author{Ephor Linguística Computacional {-} Maringá {-} PR}%
+\date{2024, v{-}1.9.7}%
+\setlength{\parindent}{1.3cm}%
+\setlength{\parskip}{0.2cm}%
+\SingleSpacing%
 %
 \begin{document}%
 \normalsize%
+\maketitle%
+\selectlanguage{brazil}%
+\frenchspacing%
+\section*{Resumo}%
+\label{sec:Resumo}%
+
+                Aviso Importante
+                Este documento foi gerado usando processamento de linguística computacional auxiliado por inteligência artificial. Portanto este conteúdo requer revisão humana, pois pode conter erros.
+                \vspace{\onelineskip}
+            %
+\textbf{Palavras-chave}: .
+
+%
 \section{Relato}%
 \label{sec:Relato}%
 O presidente da Ucr\^ania, Volodymyr Zelensky, anunciou que os m{\'\i}sseis de longo alcance que foram autorizados a serem utilizados contra a R\'ussia falar\~ao por si. Esta declara\c{c}\~ao foi feita ap\'os os Estados Unidos darem permiss\~ao para a Ucr\^ania utilizar armas de longo alcance fornecidas pelo pa{\'\i}s. Zelensky afirmou que est\'a apresentando o ''Plano da Vit\'oria'' aos parceiros da Ucr\^ania na guerra e que os m{\'\i}sseis de longo alcance s\~ao cruciais para o ex\'ercito do pa{\'\i}s nas batalhas contra a R\'ussia. A Ucr\^ania recebeu aprova\c{c}\~ao de Joe Biden para realizar esses ataques com m{\'\i}sseis ATACMS, que podem alcan\c{c}ar at\'e 306 km, de acordo com a CBS News. A Ucr\^ania \'e fortemente dependente da assist\^encia dos Estados Unidos para enfrentar a R\'ussia. Recentemente, a administra\c{c}\~ao Biden liberou um pacote de ajuda militar no valor de US\$425 milh\~oes. De acordo com o Instituto Kiel, a assist\^encia financeira total dos EUA para a Ucr\^ania ultrapassa US\$84,7 bilh\~ao, sendo US\$56,8 bilh\~oes em assist\^encia militar.

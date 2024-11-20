@@ -1,7 +1,8 @@
 This is BibTeX, Version 0.99d (TeX Live 2022/Debian)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
-The top-level auxiliary file: abntex2-modelo-artigo.aux
+The top-level auxiliary file: pdf_output/2024-11-19-23-28-43.aux
 The style file: abntex2-alf.bst
+I found no \bibdata command---while reading file pdf_output/2024-11-19-23-28-43.aux
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
@@ -11,8 +12,7 @@ Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated wiz_functions (elt_size=4) to 9000 items from 6000.
-Database file #1: abntex2-options.bib
-Database file #2: abntex2-modelo-references.bib
+Warning--I didn't find a database entry for "abnt-url-package=url"
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
 Reallocated global_strs (elt_size=200001) to 20 items from 10.
@@ -22,44 +22,45 @@ Reallocated glb_str_end (elt_size=4) to 20 items from 10.
 | Em caso de dúvidas ou problemas com este estilo procure |
 | http://www.abntex.net.br/                               |
 +---------------------------------------------------------+
-You've used 7 entries,
+You've used 0 entries,
             6714 wiz_defined-function locations,
-            1222 strings with 10260 characters,
-and the built_in function-call counts, 8619 in all, are:
-= -- 1132
-> -- 107
-< -- 221
-+ -- 310
-- -- 35
-* -- 497
-:= -- 1165
-add.period$ -- 27
-call.type$ -- 7
-change.case$ -- 44
-chr.to.int$ -- 3
-cite$ -- 6
-duplicate$ -- 813
-empty$ -- 346
-format.name$ -- 162
-if$ -- 1712
-int.to.chr$ -- 4
+            1194 strings with 9345 characters,
+and the built_in function-call counts, 679 in all, are:
+= -- 182
+> -- 0
+< -- 0
++ -- 46
+- -- 0
+* -- 27
+:= -- 155
+add.period$ -- 0
+call.type$ -- 0
+change.case$ -- 0
+chr.to.int$ -- 0
+cite$ -- 0
+duplicate$ -- 0
+empty$ -- 1
+format.name$ -- 0
+if$ -- 139
+int.to.chr$ -- 0
 int.to.str$ -- 0
-missing$ -- 98
-newline$ -- 38
-num.names$ -- 30
-pop$ -- 120
+missing$ -- 0
+newline$ -- 8
+num.names$ -- 0
+pop$ -- 25
 preamble$ -- 1
-purify$ -- 22
+purify$ -- 0
 quote$ -- 0
-skip$ -- 913
+skip$ -- 40
 stack$ -- 1
-substring$ -- 377
-swap$ -- 278
-text.length$ -- 6
+substring$ -- 44
+swap$ -- 0
+text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
 type$ -- 0
 warning$ -- 0
-while$ -- 44
+while$ -- 2
 width$ -- 0
-write$ -- 100
+write$ -- 8
+(There was 1 error message)

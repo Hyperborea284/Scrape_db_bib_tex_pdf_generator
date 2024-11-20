@@ -5,12 +5,11 @@ from datetime import datetime
 from pylatex import Document, Section, Command, NoEscape
 from pylatexenc.latexencode import UnicodeToLatexEncoder, unicode_to_latex
 import subprocess
-import shutil
-from BibGenerator import BibGenerator
 
 # Configuração do logger
 logging.basicConfig(filename='TexGenerator.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class TexGenerator:
     """
@@ -24,15 +23,11 @@ class TexGenerator:
         """
         self.db_name = os.path.join(os.getcwd(), "databases", os.path.basename(db_name))
         os.makedirs(self.base_dir, exist_ok=True)
-        
-        # Configuração do encoder com política de substituição e ajuste para apenas caracteres não-ASCII
         self.encoder = UnicodeToLatexEncoder(
-            unknown_char_policy="replace",  # Substitui caracteres não mapeados por LaTeX
-            non_ascii_only=True            # Escapa apenas caracteres fora do ASCII
+            unknown_char_policy="replace",
+            non_ascii_only=True
         )
-        
-        self.bib_generator = BibGenerator(db_name)
-        
+
     @staticmethod
     def generate_timestamp() -> str:
         """
@@ -44,109 +39,107 @@ class TexGenerator:
     def fetch_summaries_and_sources(self) -> tuple:
         """
         Busca os resumos de cada seção e o conteúdo do arquivo BibTeX.
-    
-        Retorna:
-        tuple: (Dicionário de resumos, Conteúdo do arquivo BibTeX).
         """
         sections = ["relato", "contexto", "entidades", "linha_tempo", "contradicoes", "conclusao"]
         summaries = {}
         bib_content = ""
-    
+
         try:
             if not os.path.exists(self.db_name):
                 logging.error(f"Banco de dados não encontrado: {self.db_name}")
                 return summaries, bib_content
-    
+
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
-    
+
             for section in sections:
                 query = f"SELECT summary_gpt3 FROM {section}"
                 cursor.execute(query)
                 rows = cursor.fetchall()
-    
-                if rows:
-                    summaries[section] = [row[0] for row in rows if row[0]]
-                else:
-                    summaries[section] = []
-    
-                logging.info(f"Resumos recuperados para a seção '{section}': {summaries[section]}")
-    
+                summaries[section] = [row[0] for row in rows if row[0]]
+
             conn.close()
-    
-            # Carregar o conteúdo do BibTeX
-            bib_path = os.path.join(self.base_dir, f"{self.generate_timestamp()}.bib")
-            if os.path.exists(bib_path):
-                with open(bib_path, 'r', encoding='utf-8') as f:
-                    bib_content = f.read()
-    
         except sqlite3.Error as e:
-            logging.error(f"Erro ao buscar resumos ou fontes: {e}")
+            logging.error(f"Erro ao buscar resumos: {e}")
         except Exception as e:
-            logging.error(f"Erro geral ao carregar fontes ou resumos: {e}")
-    
+            logging.error(f"Erro geral: {e}")
+
         return summaries, bib_content
 
     def create_tex_document(self, summaries: dict, tags: list, bib_path: str) -> Document:
         """
         Cria um documento LaTeX com os resumos e fontes fornecidos.
         """
-        doc = Document()
-        
+        doc = Document(
+            documentclass="abntex2",
+            document_options=["article", "11pt", "oneside", "a4paper", "brazil", "sumario=tradicional"]
+        )
+    
         # Preâmbulo otimizado
         preamble = [
             r'\usepackage[T1]{fontenc}',
             r'\usepackage[utf8]{inputenc}',
             r'\usepackage{lmodern}',
-            r'\usepackage{textcomp}',
-            r'\usepackage{lastpage}',
             r'\usepackage{indentfirst}',
             r'\usepackage{graphicx}',
-            r'\usepackage[alf]{abntex2cite}',
-            r'\usepackage[brazilian,hyperpageref]{backref}',
             r'\usepackage{color}',
-            r'\usepackage{hyperref}',
             r'\usepackage{microtype}',
-            r'\sloppy',
+            r'\usepackage{lipsum}',
+            r'\usepackage[brazilian,hyperpageref]{backref}',
+            r'\usepackage[alf]{abntex2cite}',
             r'''
             \definecolor{blue}{RGB}{41,5,195}
             \hypersetup{
-                pdftitle={Relatório de Resumos},
+                pdftitle={Modelo Canônico de Artigo Científico com abnTeX},
                 pdfauthor={Ephor Linguística Computacional - Maringá - PR},
                 pdfsubject={Relatório gerado automaticamente},
+                pdfkeywords={abnt, latex, abntex, abntex2, artigo científico},
                 colorlinks=true,
                 linkcolor=blue,
                 citecolor=blue,
-                filecolor=magenta,
                 urlcolor=blue
             }
-            '''
+            ''',
+            # Adicionando definição genérica para \theforeigntitle
+            r'\newcommand{\theforeigntitle}{Título genérico}'
         ]
-        
+    
         for command in preamble:
             doc.preamble.append(NoEscape(command))
-        
-        doc.preamble.append(Command("title", "Relatório de Resumos"))
-        doc.preamble.append(Command("author", "Ephor Linguística Computacional"))
-        doc.preamble.append(Command("date", datetime.now().strftime("%Y-%m-%d")))
-        
-        if tags:
-            with doc.create(Section("Palavras-chave")):
-                doc.append(NoEscape(r'\textbf{Palavras-chave}: ' + ', '.join(tags) + '.'))
-        
-        # Processamento seguro do conteúdo
+    
+        doc.preamble.append(Command("title", "Modelo Canônico de Artigo Científico com abnTeX"))
+        doc.preamble.append(Command("author", "Ephor Linguística Computacional - Maringá - PR"))
+        doc.preamble.append(Command("date", datetime.now().strftime("%Y, v-1.9.7")))
+    
+        # Ajustes de layout
+        doc.preamble.append(NoEscape(r'\setlength{\parindent}{1.3cm}'))
+        doc.preamble.append(NoEscape(r'\setlength{\parskip}{0.2cm}'))
+        doc.preamble.append(NoEscape(r'\SingleSpacing'))
+    
+        doc.append(NoEscape(r'\maketitle'))
+        doc.append(NoEscape(r'\selectlanguage{brazil}'))
+        doc.append(NoEscape(r'\frenchspacing'))
+    
+        # Resumo
+        with doc.create(Section("Resumo", numbering=False)):
+            doc.append(NoEscape(r"""
+                Aviso Importante
+                Este documento foi gerado usando processamento de linguística computacional auxiliado por inteligência artificial. Portanto este conteúdo requer revisão humana, pois pode conter erros.
+                \vspace{\onelineskip}
+            """))
+            doc.append(NoEscape(r"\textbf{Palavras-chave}: " + ', '.join(tags) + '.'))
+    
+        # Adiciona seções de conteúdo
         for section, texts in summaries.items():
             with doc.create(Section(section.capitalize())):
                 for text in texts:
                     if text.strip():
-                        # Evita aplicar escaping redundante, corrigindo diretamente o Unicode problemático
-                        escaped_text = unicode_to_latex(text, unknown_char_policy="replace")  # Substituir caracteres desconhecidos
-                        doc.append(NoEscape(escaped_text))
-        
-        # Adiciona referências bibliográficas, se aplicável
+                        doc.append(NoEscape(unicode_to_latex(text, unknown_char_policy="replace")))
+    
+        # Referências bibliográficas
         if bib_path and os.path.exists(bib_path):
             doc.append(NoEscape(r'\bibliography{' + os.path.splitext(os.path.basename(bib_path))[0] + '}'))
-        
+    
         return doc
 
     def save_files(self, tex_content: str, bib_content: str, timestamp: str) -> tuple:
@@ -159,11 +152,9 @@ class TexGenerator:
         try:
             with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
                 tex_file.write(tex_content)
-            logging.info(f"Arquivo LaTeX salvo: {tex_file_path}")
 
             with open(bib_file_path, 'w', encoding='utf-8') as bib_file:
                 bib_file.write(bib_content)
-            logging.info(f"Arquivo BibTeX salvo: {bib_file_path}")
         except Exception as e:
             logging.error(f"Erro ao salvar arquivos: {e}")
             return "", ""
@@ -175,8 +166,17 @@ class TexGenerator:
         Compila o arquivo LaTeX para PDF.
         """
         try:
+            base_name = os.path.splitext(tex_file_path)[0]
             for _ in range(2):  # Executar duas vezes para resolver referências
                 subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
+    
+            # Executa bibtex para processar as referências
+            subprocess.run(['bibtex', base_name + '.aux'], check=True)
+    
+            # Compila novamente após bibtex
+            subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
+            subprocess.run(['pdflatex', '-output-directory', self.base_dir, tex_file_path], check=True)
+    
             pdf_file_path = os.path.splitext(tex_file_path)[0] + ".pdf"
             if os.path.exists(pdf_file_path):
                 logging.info(f"PDF gerado com sucesso: {pdf_file_path}")
@@ -193,49 +193,30 @@ class TexGenerator:
         Remove arquivos auxiliares gerados durante a compilação LaTeX.
         """
         base_name = os.path.splitext(os.path.basename(tex_file_path))[0]
-        aux_extensions = ['.aux', '.out', '.fls', '.fdb_latexmk', '.toc', '.bbl', '.blg']
+        aux_extensions = ['.aux', '.out', '.toc', '.bbl', '.blg']
 
         for ext in aux_extensions:
             aux_file = os.path.join(self.base_dir, base_name + ext)
             if os.path.exists(aux_file):
-                try:
-                    os.remove(aux_file)
-                    logging.info(f"Arquivo auxiliar removido: {aux_file}")
-                except OSError as e:
-                    logging.warning(f"Falha ao remover {aux_file}: {e}")
+                os.remove(aux_file)
 
     def generate_and_compile_document(self, summaries=None, bib_content=None) -> str:
         """
         Gera um documento LaTeX e compila-o para PDF.
         """
-        # Gera o timestamp para nomear arquivos
         timestamp = self.generate_timestamp()
-        
+
         if summaries is None or bib_content is None:
             summaries, bib_content = self.fetch_summaries_and_sources()
-        
-        if not summaries or all(len(texts) == 0 for texts in summaries.values()):
-            logging.error("Nenhum resumo válido disponível para gerar o documento.")
-            # Cria um documento mínimo para evitar falha total
-            summaries = {"Aviso": ["Nenhum conteúdo disponível para gerar o PDF."]}
-    
-        # Gera o arquivo LaTeX com conteúdo válido
+
         doc = self.create_tex_document(summaries, [], None)
         tex_content = doc.dumps()
-    
-        # Salva os arquivos .tex e .bib
+
         tex_file_path, bib_file_path = self.save_files(tex_content, bib_content, timestamp)
-    
-        if not tex_file_path:
-            logging.error("Erro ao salvar o arquivo LaTeX.")
-            return ""
-    
-        # Compila o arquivo LaTeX para PDF
+
         pdf_file_path = self.compile_tex_to_pdf(tex_file_path)
-    
+
         if pdf_file_path:
             self.cleanup_auxiliary_files(tex_file_path)
-        else:
-            logging.error("Erro durante a compilação do PDF.")
-        
+
         return pdf_file_path
