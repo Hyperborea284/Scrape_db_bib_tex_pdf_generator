@@ -159,20 +159,24 @@ class Main:
             print("Gerando arquivo BibTeX...")
             bib_generator = BibGenerator(self.nome_banco)
             timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")  # Geração de timestamp
-            bib_file = bib_generator.generate_and_save_bib(timestamp)
+            bib_path = bib_generator.generate_and_save_bib(timestamp)
     
-            if not bib_file:
-                print("Erro ao gerar o arquivo BibTeX.")
-                logging.error("Erro ao gerar o arquivo BibTeX.")
+            if not bib_path or os.path.getsize(bib_path) == 0:
+                print("Erro ao gerar o arquivo BibTeX ou arquivo vazio.")
+                logging.error(f"Arquivo BibTeX gerado vazio ou inexistente: {bib_path}")
                 return
+    
+            # Log de sucesso na geração do BibTeX
+            logging.info(f"Arquivo BibTeX gerado com sucesso: {bib_path}")
     
             # Etapa 3: Gerar PDF
             print("Gerando PDF a partir dos dados...")
             tex_generator = TexGenerator(self.nome_banco)
-            pdf_path = tex_generator.generate_and_compile_document(summaries=summaries, bib_content=None)
+            pdf_path = tex_generator.generate_and_compile_document(summaries=summaries, bib_path=bib_path)
     
             if pdf_path:
                 print(f"PDF gerado com sucesso: {pdf_path}")
+                logging.info(f"PDF gerado com sucesso: {pdf_path}")
             else:
                 print("Erro ao gerar o PDF.")
                 logging.error("Erro ao gerar o PDF.")
