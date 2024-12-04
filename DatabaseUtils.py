@@ -261,32 +261,32 @@ class DatabaseUtils:
         """
         Cria e popula a tabela 'bib_references' com dados dos links existentes.
         """
-        conn = self.connect()
-        try:
-            self.create_table_bib_references(conn)
-            links = conn.execute("SELECT id, meta_description, link FROM links").fetchall()
+        with self.connect() as conn:
+            try:
+                self.create_table_bib_references(conn)  # Garante a existência da tabela
+                links = conn.execute("SELECT id, meta_description, link FROM links").fetchall()
     
-            if not links:
-                logging.warning("Nenhum link disponível para popular a tabela 'bib_references'.")
-                return
+                if not links:
+                    logging.warning("Nenhum link disponível para popular a tabela 'bib_references'.")
+                    return
     
-            for link in links:
-                try:
-                    title = link[1] or "Título Desconhecido"
-                    url = link[2]
-                    conn.execute('''
-                    INSERT OR IGNORE INTO bib_references (id, title, url)
-                    VALUES (?, ?, ?)
-                    ''', (link[0], title, url))
-                except Exception as e:
-                    logging.error(f"Erro ao inserir na tabela 'bib_references': {e}")
+                for link in links:
+                    try:
+                        # Verificar e normalizar os dados
+                        title = link[1] or "Título Desconhecido"
+                        url = link[2]
     
-            conn.commit()
-            logging.info("Tabela 'bib_references' populada com sucesso.")
-        except sqlite3.Error as e:
-            logging.error(f"Erro ao criar ou popular a tabela 'bib_references': {e}")
-        finally:
-            self.disconnect(conn)
+                        conn.execute('''
+                            INSERT OR IGNORE INTO bib_references (id, title, url)
+                            VALUES (?, ?, ?)
+                        ''', (link[0], title, url))
+                    except Exception as e:
+                        logging.error(f"Erro ao inserir na tabela 'bib_references': {e}")
+    
+                conn.commit()
+                logging.info("Tabela 'bib_references' populada com sucesso.")
+            except sqlite3.Error as e:
+                logging.error(f"Erro ao criar ou popular a tabela 'bib_references': {e}")
 
     def fetch_summaries(self, table_name: str) -> List[dict]:
         """
@@ -327,37 +327,32 @@ class LinkManager:
 
     def fetch_and_store_link(self, url: str) -> bool:
         """
-        Busca dados de um link e armazena no banco de dados.
-    
-        Parâmetros:
-        url (str): URL do qual extrair os dados.
-    
-        Retorna:
-        bool: True se os dados foram armazenados com sucesso, False caso contrário.
+        Faz o download e armazena as informações extraídas de um link.
         """
         if not self.is_valid_url(url):
             logging.error(f"URL inválida: {url}")
             return False
     
         try:
+            # Extração de dados do link
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             article = self.goose.extract(url)
     
             if article.cleaned_text:
-                # Normalização de publish_date
+                # Normalização de dados
                 publish_date = article.publish_date
                 if isinstance(publish_date, list):
-                    publish_date = publish_date[0]  # Usa o primeiro valor, se for uma lista
+                    publish_date = publish_date[0]  # Usa o primeiro valor, se for lista
     
                 link_data = {
                     "link": url,
                     "cleaned_text": article.cleaned_text,
                     "authors": ', '.join(article.authors) if article.authors else None,
                     "domain": article.domain,
-                    "publish_date": publish_date or None,  # Garantir tipo compatível
-                    "meta_description": article.meta_description,
-                    "title": article.title,
+                    "publish_date": publish_date or None,
+                    "meta_description": article.meta_description or "Título Desconhecido",
+                    "title": article.title or "Título Desconhecido",
                     "tags": ', '.join(article.tags) if article.tags else None,
                     "schema": json.dumps(article.schema) if article.schema else None,
                     "opengraph": json.dumps(article.opengraph) if article.opengraph else None,
@@ -366,10 +361,11 @@ class LinkManager:
                 # Inserir dados na tabela 'links'
                 success = self.db_utils.insert_link(link_data)
     
-                # Se o link foi armazenado com sucesso, agora insira os dados na tabela 'bib_references'
+                # Chamar método para popular a tabela 'bib_references'
                 if success:
-                    self.db_utils.insert_bib_reference(link_data)  # Função fictícia para ilustrar
-    
+                    self.db_utils.create_and_populate_references_table()
+                    logging.info("Tabela 'bib_references' atualizada após inserção do link.")
+                
                 return success
             else:
                 logging.warning(f"Falha ao extrair conteúdo limpo para o link: {url}")
